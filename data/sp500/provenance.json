@@ -1,0 +1,9 @@
+{
+  "url": "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/36472b57910842f4025e8ca8303b93a692d2bbae/data/constituents.csv",
+  "date": "2026-10-09T03:19:58Z",
+  "retrieved_at": "2026-10-12T02:41:17.397826+00:00",
+  "sha": "36472b57910842f4025e8ca8303b93a692d2bbae",
+  "sha256": "a8045f043ea7e68d4254a07470a5e95ca5759ded4656657eac514162e6e82e06",
+  "ticker_count": 503,
+  "currency": "Upstream updated within 14 days; not an S&P licensed feed"
+}

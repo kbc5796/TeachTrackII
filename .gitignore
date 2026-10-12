@@ -6,3 +6,7 @@ venv/
 data/
 .pytest_cache/
 .ruff_cache/
+/.source_deps/
+/.venv/
+/.pytest_cache/
+/.ruff_cache/
