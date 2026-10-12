@@ -8,7 +8,7 @@ Our team researches and verifies company job-board links manually. The crawler c
 
 - [Manually collect company job-board URLs](#manually-collect-company-job-board-urls)
 - [Install dependencies](#install-dependencies)
-- [Run the industry crawler](#run-the-industry-crawler)
+- [Run the jobs crawler](#run-the-jobs-crawler)
 - [CS job filtering](#cs-job-filtering)
 - [Keyword extraction](#keyword-extraction)
 - [Categories](#categories)
@@ -19,14 +19,27 @@ Our team researches and verifies company job-board links manually. The crawler c
 
 ## Manually collect company job-board URLs
 
-The workflow is: manually research company sources → edit `company_sources.csv` → crawl individual postings → filter CS relevance → save technical keywords/categories → export research data.
+```text
+MANUAL SOURCE COLLECTION
+        ↓
+company_sources.csv
+        ↓
+jobs spider
+        ↓
+individual job postings
+        ↓
+CS filtering / skill extraction
+        ↓
+storage / exports
+```
 
-The committed source dataset contains **500 companies representing 503 tickers**, with **202 collected listing URLs and 298 missing listing URLs**. These are October 2026 collection counts, not a claim that all sources are current or manually verified. Local team edits may increase coverage. Keep every company row even when its URL is missing.
+Keep all 500 company rows and the `tickers` column for multiple share classes.
+Missing listing URLs remain blank until an official board is confidently identified.
 
-Open `company_sources.csv` in a text editor or spreadsheet application. Preserve this header and all existing additional columns:
+Open `company_sources.csv` in a text editor or spreadsheet application. The source columns are:
 
 ```csv
-company_name,ticker,career_site_url,job_listing_url,job_platform,source_status,sector,website_url
+company_name,ticker,career_site_url,job_listing_url,job_platform,source_status,sector,website_url,tickers
 ```
 
 | Field | Team maintenance |
@@ -40,11 +53,21 @@ company_name,ticker,career_site_url,job_listing_url,job_platform,source_status,s
 
 For each company, follow its official careers links, confirm that the destination displays actual job listings for that employer, and copy the exact URL. A corporate homepage or generic careers information page is not a replacement for a listing URL. Retain CSV quoting for names/values containing commas, and save as UTF-8 CSV without changing ticker text or deleting additional columns.
 
-Existing `source_status`, `last_verification_date`, `evidence` and related fields originate from historical automated runs. **Their existing Verified labels are not manual verification.** When reviewing a row, update its status and add optional `reviewed_by` and `manual_review_date` columns to record the human review separately. Keep historical fields for reference. Suggested manual statuses include Needs Review, Verified, Blocked, No Listings Found, Invalid and Excluded.
+Use `source_status` for manual review. Suggested statuses include Needs Review,
+Verified, Blocked, No Listings Found, Invalid and Excluded. A status alone is not
+proof of a human review; optional `reviewed_by` and `manual_review_date` columns
+can record that review. Existing statuses are annotations, not proof that the
+current URL has been reviewed by a team member.
 
-The default jobs crawl attempts every selected company with a valid-looking listing URL, regardless of historical Verified/Unverified/Blocked labels. It skips missing URLs, malformed inputs, and rows explicitly marked `Invalid` or `Excluded`; an optional `excluded` column set to `true`, `yes` or `1` also excludes a row. Skips are recorded with company identity and reason. Network failures are logged and stored without editing the CSV.
+Prefer a stable United States country filter in the listing URL. For example,
+Apple's listing is `https://jobs.apple.com/en-us/search?location=united-states-USA`;
+its separate careers information page remains in `career_site_url`. Preserve
+filter query parameters. Use a direct global search page if a stable U.S. filter
+cannot be confirmed. Never substitute a corporate/careers page for a missing board.
 
-See [the manual source guide](docs/manual-sources.md) for collaboration and review details. The files under `data/sp500/` and `reports/sources/` are preserved historical artifacts, not active source-management tools or current manual review results.
+The default jobs crawl attempts every selected company with a valid-looking listing URL, regardless of Verified/Unverified/Blocked labels. It skips missing URLs, malformed inputs, and rows explicitly marked `Invalid` or `Excluded`; an optional `excluded` column set to `true`, `yes` or `1` also excludes a row. Skips are recorded with company identity and reason. Network failures are logged and stored without editing the CSV.
+
+See [the manual source guide](docs/manual-sources.md) for collaboration and review details.
 
 ## Install dependencies
 
@@ -71,7 +94,7 @@ python -m playwright install chromium
 
 Add `-a render=true` to a jobs crawl only when needed. Playwright rendering is opt-in and does not bypass robots, authentication or CAPTCHA restrictions. Browser compatibility has not been verified by the automated fixture tests.
 
-## Run the industry crawler
+## Run the jobs crawler
 
 Run these commands from the repository root with the environment active. Use the **`jobs` spider** for CS job collection.
 
@@ -87,7 +110,7 @@ Multiple companies:
 python -m scrapy crawl jobs -a only=NVDA,ADBE -a max_jobs=30 -a max_pages=15 -s JOB_OUTPUT_DIR=data/sample
 ```
 
-Limited test crawl, including 3M as a missing-URL example in the saved dataset:
+Limited test crawl:
 
 ```powershell
 python -m scrapy crawl jobs -a only=NVDA,ABNB,MMM -a max_jobs=10 -a max_pages=5 -s CLOSESPIDER_TIMEOUT=75 -s JOB_OUTPUT_DIR=data/test-crawl
@@ -102,8 +125,6 @@ python -m scrapy crawl jobs -a max_jobs=1000 -a max_pages=100 -s JOBDIR=data/che
 `max_jobs` limits examined postings per company, including jobs later rejected as non-CS; it is not a target number of accepted jobs. `max_pages` limits scheduled generic HTML pages. `only` selects primary tickers; `-a sources=path/to/companies.csv` selects another compatible input file. `-s CS_RELEVANCE_THRESHOLD=0.7` changes the relevance threshold. The optional `source_status` argument can restrict a run explicitly, but no Verified restriction is enabled by default.
 
 For a checkpointed crawl, stop gracefully with Ctrl+C once, then rerun the same command with the same sources and arguments. For a new refresh, use a new checkpoint directory. Per-company counters reset on process restart. Only one crawler should use each output/checkpoint directory at a time.
-
-The separate `industry` spider remains available for company website research pages. It is not the individual-job/CS storage workflow described here; see [job crawler details](docs/job-crawler.md).
 
 ## CS job filtering
 
@@ -152,7 +173,7 @@ An additional Scrapy feed can export newly accepted items from one run:
 python -m scrapy crawl jobs -a only=NVDA -a max_jobs=20 -s JOB_OUTPUT_DIR=data/export-demo -O data/export-demo/new_jobs.json
 ```
 
-Use `.csv` or `.jsonl` for other feed formats. `-O` overwrites that feed, and duplicate updates do not produce new feed rows; use `cs_jobs.*` for accumulated output. Historical root-level JSON captures are not current validated CS-only datasets.
+Use `.csv` or `.jsonl` for other feed formats. `-O` overwrites that feed, and duplicate updates do not produce new feed rows; use `cs_jobs.*` for accumulated output. Save generated outputs under the ignored `data/` directory.
 
 ## Testing
 
@@ -176,7 +197,7 @@ This is a captured-snapshot demonstration, not a fresh live crawl. See [testing 
 
 | Path | Purpose |
 | --- | --- |
-| `company_sources.csv` | Team-maintained company/source input, including historical metadata. |
+| `company_sources.csv` | Manually maintained company/source input. |
 | `industry_crawler/company_input.py` | Read-only CSV structure checks; no HTTP requests or source updates. |
 | `industry_crawler/spiders/jobs.py` | Individual job adapters, pagination and missing-source handling. |
 | `industry_crawler/spiders/platforms.py` | Platform detection, API helpers and HTML text utilities. |
@@ -184,15 +205,13 @@ This is a captured-snapshot demonstration, not a fresh live crawl. See [testing 
 | `industry_crawler/cs_filter.py` | Weighted CS relevance scoring. |
 | `industry_crawler/pipelines.py`, `storage.py`, `normalization.py` | Validation, deduplication, SQLite and exports. |
 | `industry_crawler/settings.py`, `retry.py`, `job_errors.py` | Responsible crawling, retries and failure handling. |
-| `industry_crawler/spiders/industry.py` | Independent company website research spider. |
 | `tests/` | Job, CSV and platform tests, plus captured job fixtures. |
 | `requirements.txt`, `pyproject.toml`, `scrapy.cfg` | Dependencies, checks and Scrapy configuration. |
 | `docs/manual-sources.md`, `docs/job-crawler.md` | Manual source workflow and crawler reference. |
-| `data/sp500/`, `reports/sources/` | Preserved historical data; no active generators remain. |
 
 ## Limitations and future work
 
-The company CSV is intentionally incomplete and needs manual research. A saved listing URL or historical Verified label does not guarantee current access. Workday, Greenhouse and Lever have API extraction adapters; SmartRecruiters, iCIMS, Taleo, Oracle Recruiting, SAP SuccessFactors, Eightfold and Custom sites rely on generic HTML support and may require adapter work. Detection is not a guarantee of extraction.
+Blank listing URLs require further manual research. A saved listing URL or Verified label does not guarantee current access. Workday, Greenhouse and Lever have API extraction adapters; SmartRecruiters, iCIMS, Taleo, Oracle Recruiting, SAP SuccessFactors, Eightfold and Custom sites rely on generic HTML support and may require adapter work. Detection is not a guarantee of extraction.
 
 JavaScript-heavy websites, unsupported layouts, changing APIs, robots restrictions, rate limiting, authentication and blocked boards can prevent collection. Generic HTML follows same-host links within depth/page limits. The crawler records failures and continues without changing sources or bypassing restrictions.
 

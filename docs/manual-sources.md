@@ -1,73 +1,67 @@
 # Maintaining company sources manually
 
-`company_sources.csv` is the primary input. Team members research and review URLs;
-the crawler only reads the file. No importer, website discovery, network source
-verification service or source-report generator is included.
+`company_sources.csv` is human-maintained, read-only crawler input. The crawler
+starts exclusively from `job_listing_url`; it never derives a board from a
+corporate website or careers page and never rewrites the CSV.
 
-## Preserve the existing company list
+## Preserve company identity
 
-Keep all 500 company records, all existing listing URLs, the additional `tickers`
-column representing 503 share-class symbols, and the remaining historical fields.
-The committed October 2026 dataset contains 202 listing URLs and 298 empty ones.
-Do not remove a company just because it has no usable URL yet. Local corrections
-may differ from that historical snapshot.
+Keep all 500 companies in their existing order. Keep names, primary tickers,
+additional share-class `tickers`, sectors and official corporate website URLs.
+Do not remove a company because its listing URL is missing.
 
-## Review a company
+## Research and edit a source
 
-1. Open the CSV in a UTF-8 text editor or spreadsheet application.
-2. Research the employer's official website and follow its official careers links.
-3. Find the actual job-search/listing page, including an employer-specific ATS board.
-4. Confirm in the browser that it belongs to the intended company and shows jobs.
-5. Update that company's `job_listing_url` with the exact observed URL. A homepage
-   or careers information page goes in `website_url` or `career_site_url` instead.
-6. Set `source_status` for your review and record optional `reviewed_by` and
-   `manual_review_date` fields. Leave missing URLs empty; do not guess them.
-7. Save as UTF-8 CSV, preserving quoted commas and the existing columns. Review the
-   Git diff for unintended spreadsheet formatting or lost rows before sharing.
+1. Follow the employer's official careers links in a browser.
+2. Find its direct search/results page with actual vacancies. Employer-specific
+   Workday, Greenhouse, Lever, Oracle, iCIMS and other official ATS boards are valid.
+3. Prefer a stable United States filter; copy its observed URL including query
+   parameters. A locale such as `en-US` alone is not a U.S. location filter.
+4. If a stable U.S. filter cannot be confirmed, use the direct official search
+   page and inspect locations. Leave the field blank if the board itself is uncertain.
+5. Keep careers information in `career_site_url` and corporate pages in
+   `website_url`. Never use aggregators, individual postings, login pages, job
+   alerts, talent-network forms or generic careers landing pages as listing URLs.
+6. Update `job_platform` when confirmed. Mark `source_status` for manual review;
+   optional `reviewed_by` and `manual_review_date` columns can record the reviewer.
+7. Save UTF-8 CSV with quoting intact and review the Git diff for changed identity,
+   lost filter parameters, row order or unintended data edits.
 
-Agree on company/ticker ownership within the team to avoid conflicting CSV edits.
+For Apple, keep the separate careers navigation page and use:
+
+```text
+https://jobs.apple.com/en-us/search?location=united-states-USA
+```
 
 ## Columns and runtime behavior
 
-Recommended base columns:
-
 ```csv
-company_name,ticker,career_site_url,job_listing_url,job_platform,source_status,sector,website_url
+company_name,ticker,career_site_url,job_listing_url,job_platform,source_status,sector,website_url,tickers
 ```
 
-The reader requires unique `company_name`, `ticker` and `job_listing_url` headers;
-other named columns are allowed. It checks structure locally without contacting
-the company. A missing header is reported as an input error, while a malformed
-row is skipped without preventing valid rows from being crawled.
+The reader requires unique `company_name`, `ticker` and `job_listing_url` headers.
+Other named columns are allowed. It checks structure locally; malformed rows are
+reported without preventing valid companies from being crawled.
 
-`source_status` is maintained manually from now on. Existing statuses and fields
-such as `last_verification_date`, `final_resolved_url`, `failure_reason`, `evidence`
-and provenance are **historical automated observations**, not human verification.
-Retain them as reference and identify new human reviews using the optional reviewer
-and manual-date fields. Historical files under `reports/sources/` are not a live
-manual review queue; nothing regenerates them.
+Statuses are manual annotations. Every valid supplied listing URL is attempted
+by default; Verified is not required. Use Invalid or Excluded to skip a company,
+or add `excluded=true`. Missing and syntactically invalid listing URLs are always
+skipped and reported with company identity and reason. Blocked and Unverified
+alone do not prevent a crawl attempt. Access restrictions remain respected.
 
-All selected valid-looking listing URLs are attempted by default. Verified is not
-required. Mark an intentionally unusable URL `Invalid`, an intentionally excluded
-company `Excluded`, or add `excluded=true`. These records are skipped. Missing
-URLs and syntactically invalid URLs are also skipped. Blocked or Unverified
-labels alone do not prevent an attempt; access restrictions during the crawl are
-still respected. An explicit `source_status` spider argument can further restrict
-a run, but it does not establish whether a review was manual.
-
-## Identify missing sources without changing the file
+## Review missing sources
 
 ```powershell
 Import-Csv company_sources.csv | Where-Object { -not $_.job_listing_url } | Select-Object company_name,ticker
 ```
 
-## Test your edits
+## Test an edited source
 
 ```powershell
 python -m scrapy crawl jobs -a only=NVDA -a max_jobs=10 -s JOB_OUTPUT_DIR=data/source-edit-test
 ```
 
-Replace `NVDA` with the edited primary ticker. Check `crawl_summary.json`'s `sources`
-section for selected/scheduled totals, missing/invalid/excluded/input-error counts,
-and skipped company records. `crawl_failures.csv` contains crawl and item failures.
-Research and edit corrections manually; the crawler never writes back to the CSV.
+Replace NVDA with the edited primary ticker. Inspect `crawl_summary.json`'s
+`sources` section for scheduled and skipped companies and `crawl_failures.csv`
+for crawl/extraction failures. Research corrections manually. Outputs and
+checkpoints belong under the ignored `data/` directory.

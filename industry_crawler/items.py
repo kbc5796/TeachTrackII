@@ -1,17 +1,5 @@
-# Define here the models for your scraped items
-#
-# See documentation in:
-# https://docs.scrapy.org/en/latest/topics/items.html
-
-from dataclasses import dataclass
+"""Fields stored for individual job postings."""
 from typing import TypedDict
-
-
-@dataclass
-class IndustryCrawlerItem:
-    # define the fields for your item here like:
-    # name: str | None = None
-    pass
 
 
 class JobRecord(TypedDict, total=False):

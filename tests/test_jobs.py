@@ -71,6 +71,16 @@ def test_workday_details_and_pagination():
     assert item["job_board_url"] == ROW["job_listing_url"]
 
 
+def test_workday_posting_url_keeps_board_filters_separate():
+    board = "https://example.wd5.myworkdayjobs.com/en-US/External?locationCountry=us-id"
+    row = {**ROW, "job_listing_url": board}
+    item = next(JobsSpider().parse_workday_job(
+        response({"jobPostingInfo": {"title": "Software Engineer", "jobDescription": BODY}}),
+        row, "Workday", "/job/engineer/123"))
+    assert item["job_url"] == "https://example.wd5.myworkdayjobs.com/en-US/External/job/engineer/123"
+    assert item["job_board_url"] == board
+
+
 def test_greenhouse():
     item = next(JobsSpider().parse_greenhouse(response({"jobs": [{"id": 1, "title": "Software Engineer",
         "absolute_url": "https://example.org/jobs/1", "content": BODY, "location": {"name": "Remote"}}]}), ROW, "Greenhouse"))
@@ -168,7 +178,7 @@ def test_pipeline_rejections_and_duplicates(tmp_path):
     pipeline.store.close()
 
 
-def test_sources_status_and_fallback(tmp_path):
+def test_sources_status_filter(tmp_path):
     import asyncio
     source = tmp_path / "sources.csv"
     source.write_text("company_name,ticker,career_site_url,job_listing_url,source_status,extra\n"
@@ -177,7 +187,6 @@ def test_sources_status_and_fallback(tmp_path):
         return [item async for item in spider.start()]
     assert asyncio.run(collect(JobsSpider(sources=source, source_status="Verified")))[0]["record_type"] == "skipped"
     assert asyncio.run(collect(JobsSpider(sources=source)))[0]["record_type"] == "skipped"
-    assert isinstance(asyncio.run(collect(JobsSpider(sources=source, career_fallback="true")))[0], Request)
 
 
 def test_callback_failure_is_quarantined():

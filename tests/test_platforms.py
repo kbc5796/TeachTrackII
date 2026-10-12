@@ -26,3 +26,9 @@ def test_api_helpers():
         "https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite")
     assert greenhouse_board("https://boards.greenhouse.io/embed/job_board?for=example") == "example"
     assert lever_company("https://jobs.lever.co/example") == "example"
+
+
+def test_workdaysite_recruiting_tenant():
+    assert workday_api_base("https://wd5.myworkdaysite.com/en-US/recruiting/devonenergy/Careers") == (
+        "https://wd5.myworkdaysite.com/wday/cxs/devonenergy/Careers")
+    assert workday_api_base("https://wd5.myworkdaysite.com/recruiting/devonenergy") is None

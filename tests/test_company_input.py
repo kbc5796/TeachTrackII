@@ -2,6 +2,7 @@ import asyncio
 import csv
 import json
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from scrapy import Request
@@ -9,6 +10,7 @@ from scrapy import Request
 from industry_crawler.company_input import read_companies
 from industry_crawler.pipelines import JobPipeline
 from industry_crawler.spiders.jobs import JobsSpider
+from industry_crawler.normalization import canonical_url
 
 
 def collect(spider):
@@ -91,3 +93,50 @@ def test_known_invalid_status_skips_valid_looking_url(tmp_path):
     spider = JobsSpider(sources=path)
     assert collect(spider)[0]["record_type"] == "skipped"
     assert spider.source_summary["excluded"] == 1
+
+
+@pytest.mark.parametrize("legacy_option", ["false", "true"])
+def test_missing_listing_never_falls_back_to_corporate_or_careers_url(tmp_path, legacy_option):
+    path = tmp_path / "sources.csv"
+    path.write_text("company_name,ticker,website_url,career_site_url,job_listing_url\n"
+                    "Example,X,https://example.org/,https://example.org/careers,\n")
+    before = path.read_bytes()
+    spider = JobsSpider(sources=path, career_fallback=legacy_option)
+    output = collect(spider)
+    assert len(output) == 1
+    assert output[0]["record_type"] == "skipped"
+    assert output[0]["reason"] == "Missing job-listing URL"
+    assert spider.source_summary["missing_urls"] == 1
+    assert spider.source_summary["scheduled"] == 0
+    assert not any(isinstance(item, Request) for item in output)
+    assert path.read_bytes() == before
+
+
+def test_supplied_us_search_query_is_preserved(tmp_path):
+    path = tmp_path / "sources.csv"
+    url = "https://jobs.apple.com/en-us/search?location=united-states-USA"
+    write_sources(path, [{"company_name": "Apple Inc.", "ticker": "AAPL",
+                          "job_listing_url": url, "source_status": "Needs Review"}])
+    before = path.read_bytes()
+    request, = collect(JobsSpider(sources=path))
+    assert request.url == url
+    assert request.cb_kwargs["row"]["job_listing_url"] == url
+    assert parse_qs(urlsplit(canonical_url(url)).query) == {"location": ["united-states-USA"]}
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("facet", ["locationCountry", "Location_Country", "Country", "locationHierarchy2"])
+def test_workday_supplied_facets_survive_pagination(tmp_path, facet):
+    path = tmp_path / "sources.csv"
+    us = "bc33aa3152ec42d4995f4791a106ed09"
+    url = f"https://example.wd5.myworkdayjobs.com/External?{facet}={us}&q=software"
+    row = {"company_name": "Example", "ticker": "X", "job_listing_url": url, "source_status": ""}
+    write_sources(path, [row])
+    spider = JobsSpider(sources=path)
+    request, = collect(spider)
+    next_page = spider.workday_page(request.cb_kwargs["api"], 20, 100, row, "Workday")
+    for page in [request, next_page]:
+        body = json.loads(page.body)
+        assert body["appliedFacets"] == {facet: [us]}
+        assert body["searchText"] == "software"
+    assert json.loads(next_page.body)["offset"] == 20

@@ -4,7 +4,7 @@ from importlib.util import find_spec
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 import scrapy
 
@@ -12,7 +12,7 @@ from ..company_input import read_companies
 from ..normalization import canonical_url
 from .skill_categories import analyze_job
 from .platforms import (
-    detect_platform, workday_api_base, greenhouse_board,
+    detect_platform, workday_api_base, workday_search_filters, greenhouse_board,
     lever_company, html_to_text,
 )
 
@@ -42,9 +42,9 @@ class JobsSpider(scrapy.Spider):
     Playwright requires an explicit render=true option.
 
     Test small first:
-        scrapy crawl jobs -a only=NVDA,MSFT -a max_jobs=20 -O test.json
+        scrapy crawl jobs -a only=NVDA,MSFT -a max_jobs=20 -O data/sample/jobs.json
     Full run:
-        scrapy crawl jobs -O jobs.json
+        scrapy crawl jobs -O data/jobs.json
     """
     name = "jobs"
 
@@ -72,7 +72,7 @@ class JobsSpider(scrapy.Spider):
         })
 
     def __init__(self, only=None, max_jobs=200, max_pages=30, sources=None,
-                 source_status=None, career_fallback="false", render="false", *args, **kwargs):
+                 source_status=None, render="false", *args, **kwargs):
         super().__init__(*args, **kwargs)
         # only="MSFT,NVDA" limits the run to those tickers (for testing).
         self.only = {t.strip().upper() for t in only.split(",")} if only else None
@@ -83,7 +83,6 @@ class JobsSpider(scrapy.Spider):
         self.seen_pages = defaultdict(set)
         self.sources = Path(sources) if sources else CSV_FILE
         self.statuses = {s.strip().lower() for s in source_status.split(",")} if source_status else None
-        self.career_fallback = str(career_fallback).lower() == "true"
         self.render = str(render).lower() == "true"
         self.source_summary = {"selected": 0, "scheduled": 0, "missing_urls": 0,
                                "invalid_urls": 0, "excluded": 0, "input_errors": 0,
@@ -125,10 +124,7 @@ class JobsSpider(scrapy.Spider):
                 yield self.skip_source(row, "Excluded by requested source_status filter", "excluded")
                 continue
 
-            url = (
-                (row.get("job_listing_url") or "").strip()
-                or ((row.get("career_site_url") or "").strip() if self.career_fallback else "")
-            )
+            url = (row.get("job_listing_url") or "").strip()
             if not url:
                 yield self.skip_source(row, "Missing job-listing URL", "missing_urls")
                 continue
@@ -189,7 +185,8 @@ class JobsSpider(scrapy.Spider):
         return {**row, **entry, "record_type": "skipped"}
 
     def workday_page(self, api, offset, total, row, platform):
-        body = {"appliedFacets": {}, "limit": 20, "offset": offset, "searchText": ""}
+        facets, search = workday_search_filters(row.get("job_listing_url", ""))
+        body = {"appliedFacets": facets, "limit": 20, "offset": offset, "searchText": search}
         return scrapy.Request(
             f"{api}/jobs",
             method="POST",
@@ -225,9 +222,12 @@ class JobsSpider(scrapy.Spider):
 
     def parse_workday_job(self, response, row, platform, external_path=""):
         info = response.json().get("jobPostingInfo", {})
+        board = urlsplit(row.get("job_listing_url", ""))
+        # Search filters belong to the board, not to the individual posting path.
+        board_url = urlunsplit((board.scheme, board.netloc, board.path.rstrip("/"), "", ""))
         yield self.make_item(
             row, platform,
-            url=info.get("externalUrl") or row.get("job_listing_url", "").rstrip("/") + external_path,
+            url=info.get("externalUrl") or board_url + external_path,
             job_id=info.get("jobReqId", ""),
             employment_type=info.get("timeType", ""),
             title=info.get("title", ""),
@@ -338,7 +338,7 @@ class JobsSpider(scrapy.Spider):
                                          job_id=requisition.group(1) if requisition else "")
             else:
                 yield {"record_type": "job_board" if any(h in response.url.lower() for h in LINK_HINTS)
-                       else "industry_page", **row, "source_url": response.url}
+                       else "non_job_page", **row, "source_url": response.url}
         if depth >= 3 or self.pages[key] >= self.max_pages or self.counts[key] >= self.max_jobs:
             return
         for link in response.css("a::attr(href)").getall():
