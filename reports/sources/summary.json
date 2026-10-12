@@ -1,0 +1,40 @@
+{
+  "generated_at": "2026-10-12T02:59:23.483693+00:00",
+  "total_companies": 500,
+  "unique_companies": 500,
+  "ticker_count": 503,
+  "companies_with_job_listing_urls": 202,
+  "status_counts": {
+    "Verified": 56,
+    "Unverified": 43,
+    "Needs Review": 363,
+    "Blocked": 34,
+    "Invalid": 0,
+    "No Listings Found": 4
+  },
+  "platform_counts": {
+    "Unknown": 297,
+    "SuccessFactors": 14,
+    "Custom": 47,
+    "Workday": 88,
+    "Eightfold": 10,
+    "SmartRecruiters": 3,
+    "Oracle Cloud": 19,
+    "Taleo": 6,
+    "iCIMS": 14,
+    "Lever": 1,
+    "Greenhouse": 1
+  },
+  "unsupported_by_existing_json_crawler": 410,
+  "platforms_without_json_crawler_support": {
+    "Unknown": 297,
+    "SuccessFactors": 14,
+    "Custom": 47,
+    "Eightfold": 10,
+    "SmartRecruiters": 3,
+    "Oracle Cloud": 19,
+    "Taleo": 6,
+    "iCIMS": 14
+  },
+  "manual_review_count": 444
+}

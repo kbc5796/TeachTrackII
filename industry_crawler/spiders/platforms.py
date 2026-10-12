@@ -15,7 +15,7 @@ import re
 import shutil
 import sys
 from collections import Counter
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 LOCALE = re.compile(r"^[a-z]{2}([-_][A-Za-z]{2})?$")   # en, en-US, fr_CA
 
@@ -23,26 +23,34 @@ LOCALE = re.compile(r"^[a-z]{2}([-_][A-Za-z]{2})?$")   # en, en-US, fr_CA
 API_PLATFORMS = {"Workday", "Greenhouse", "Lever"}
 
 
-def detect_platform(url):
-    host = urlparse(url or "").netloc.lower()
-    if "myworkdayjobs.com" in host or "myworkdaysite.com" in host:
+def detect_platform(url, content=""):
+    """Detect known hosts or embedded vendor URLs; retain crawler labels."""
+    host = (urlparse(url or "").hostname or "").lower()
+    def belongs(domain):
+        return host == domain or host.endswith("." + domain)
+
+    if belongs("myworkdayjobs.com") or belongs("myworkdaysite.com"):
         return "Workday"
-    if host.endswith("greenhouse.io"):
+    if belongs("greenhouse.io") or belongs("greenhouse.com"):
         return "Greenhouse"
-    if host.endswith("lever.co"):
+    if belongs("lever.co"):
         return "Lever"
-    if "smartrecruiters.com" in host:
+    if belongs("smartrecruiters.com"):
         return "SmartRecruiters"
-    if "icims.com" in host:
+    if belongs("icims.com"):
         return "iCIMS"
-    if "taleo.net" in host:
+    if belongs("taleo.net"):
         return "Taleo"
-    if "oraclecloud.com" in host:
+    if belongs("oraclecloud.com"):
         return "Oracle Cloud"
-    if "successfactors" in host:
+    if belongs("successfactors.com") or belongs("successfactors.eu"):
         return "SuccessFactors"
-    if "eightfold.ai" in host:
+    if belongs("eightfold.ai"):
         return "Eightfold"
+    for embedded in re.findall(r'https?://[^\s\"\'<>]+', content):
+        platform = detect_platform(embedded)
+        if platform != "Custom":
+            return platform
     return "Custom"
 
 
