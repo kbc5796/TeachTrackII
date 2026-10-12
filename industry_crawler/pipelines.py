@@ -49,5 +49,6 @@ class JobPipeline:
         return item
 
     def close_spider(self, spider):
-        self.store.export(self.crawler.stats.get_stats())
+        self.store.export({**self.crawler.stats.get_stats(),
+                           "sources": getattr(spider, "source_summary", {})})
         self.store.close()

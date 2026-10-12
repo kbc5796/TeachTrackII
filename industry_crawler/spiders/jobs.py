@@ -1,4 +1,3 @@
-import csv
 import json
 import re
 from importlib.util import find_spec
@@ -9,6 +8,7 @@ from urllib.parse import urlparse
 
 import scrapy
 
+from ..company_input import read_companies
 from ..normalization import canonical_url
 from .skill_categories import analyze_job
 from .platforms import (
@@ -85,6 +85,9 @@ class JobsSpider(scrapy.Spider):
         self.statuses = {s.strip().lower() for s in source_status.split(",")} if source_status else None
         self.career_fallback = str(career_fallback).lower() == "true"
         self.render = str(render).lower() == "true"
+        self.source_summary = {"selected": 0, "scheduled": 0, "missing_urls": 0,
+                               "invalid_urls": 0, "excluded": 0, "input_errors": 0,
+                               "skipped_companies": []}
         if self.render and not HAVE_PLAYWRIGHT:
             raise ValueError("Install scrapy-playwright to use render=true")
         if self.max_jobs <= 0 or self.max_pages <= 0:
@@ -96,27 +99,44 @@ class JobsSpider(scrapy.Spider):
     async def start(self):
         if not self.sources.exists():
             self.logger.error("CSV file not found: %s", self.sources)
+            yield self.skip_source({}, "Company CSV not found", "input_errors")
             return
 
-        with open(self.sources, "r", encoding="utf-8-sig", newline="") as f:
-            rows = list(csv.DictReader(f))
+        try:
+            rows = list(read_companies(self.sources))
+        except (ValueError, OSError, UnicodeError) as exc:
+            yield self.skip_source({}, f"Cannot read company CSV: {exc}", "input_errors")
+            return
 
         for row in rows:
             ticker = (row.get("ticker") or "").strip().upper()
             if self.only and ticker not in self.only:
                 continue
 
+            self.source_summary["selected"] += 1
+            if row.get("input_error") or not row.get("company_name", "").strip() or not ticker:
+                yield self.skip_source(row, row.get("input_error") or "Missing company name or ticker", "input_errors")
+                continue
+            status = row.get("source_status", "").strip().lower()
+            if status in {"excluded", "invalid"} or row.get("excluded", "").strip().lower() in {"true", "1", "yes"}:
+                yield self.skip_source(row, "Source explicitly excluded or marked Invalid", "excluded")
+                continue
             if self.statuses and row.get("source_status", "").lower() not in self.statuses:
+                yield self.skip_source(row, "Excluded by requested source_status filter", "excluded")
                 continue
 
             url = (
                 (row.get("job_listing_url") or "").strip()
                 or ((row.get("career_site_url") or "").strip() if self.career_fallback else "")
             )
+            if not url:
+                yield self.skip_source(row, "Missing job-listing URL", "missing_urls")
+                continue
             if not canonical_url(url):
-                yield {"record_type": "skipped", **row, "source_url": url, "reason": "invalid source URL"}
+                yield self.skip_source(row, "Invalid source URL syntax", "invalid_urls")
                 continue
 
+            self.source_summary["scheduled"] += 1
             platform = detect_platform(url)
             kw = {"row": row, "platform": platform}
 
@@ -158,8 +178,16 @@ class JobsSpider(scrapy.Spider):
             )
 
     # ------------------------------------------------------------------
-    # Workday (JSON API)
+    # Local input skips (no network source verification)
     # ------------------------------------------------------------------
+    def skip_source(self, row, reason, kind):
+        entry = {"company_name": row.get("company_name", ""), "ticker": row.get("ticker", ""),
+                 "source_url": row.get("job_listing_url", ""), "reason": reason}
+        self.source_summary[kind] += 1
+        self.source_summary["skipped_companies"].append(entry)
+        self.logger.warning("Skipping %s: %s", entry["ticker"] or "source CSV", reason)
+        return {**row, **entry, "record_type": "skipped"}
+
     def workday_page(self, api, offset, total, row, platform):
         body = {"appliedFacets": {}, "limit": 20, "offset": offset, "searchText": ""}
         return scrapy.Request(

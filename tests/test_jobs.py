@@ -175,7 +175,7 @@ def test_sources_status_and_fallback(tmp_path):
                       "Test,T,https://example.org/careers,,Unverified,ignored\n")
     async def collect(spider):
         return [item async for item in spider.start()]
-    assert asyncio.run(collect(JobsSpider(sources=source, source_status="Verified"))) == []
+    assert asyncio.run(collect(JobsSpider(sources=source, source_status="Verified")))[0]["record_type"] == "skipped"
     assert asyncio.run(collect(JobsSpider(sources=source)))[0]["record_type"] == "skipped"
     assert isinstance(asyncio.run(collect(JobsSpider(sources=source, career_fallback="true")))[0], Request)
 

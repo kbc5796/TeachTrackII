@@ -1,194 +1,120 @@
-# CS job crawler
+# CS job crawler reference
 
-## Audit and scope
+The jobs spider reads `company_sources.csv` through `company_input.py`. Source
+research and review are manual; see [manual sources](manual-sources.md). The
+independent `industry` spider collects website research pages and does not use
+the CS job persistence pipeline.
 
-The original jobs spider already had useful Workday list/detail requests,
-Greenhouse content extraction, Lever sections, company metadata, and per-company
-limits. The keyword analyzer already used token boundaries, education patterns,
-section headings, and five categories. Those interfaces remain in use.
+## Adapters and record fields
 
-The original custom parser shadowed `page_text`, accepted generic careers content,
-launched rendering on every custom request when installed, and used a fixed delay.
-Descriptions were truncated, IDs and employment types were missing, and the
-pipeline did not validate, filter, deduplicate, or persist records. Existing JSON
-outputs therefore are historical mixed records, not validated current CS datasets.
-The industry spider stays independent; job storage is enabled only for `jobs`.
-The shared README, source CSV, and platform detection module are unchanged.
+- Workday: paginated CXS lists and individual details, requisition IDs, public
+  posting URLs, full descriptions, locations and employment types.
+- Greenhouse: public board jobs with `content=true`, IDs, posting URLs,
+  descriptions and locations. No undocumented pagination is added.
+- Lever: `skip`/`limit` pagination, description and section lists, IDs, hosted
+  URLs, locations and commitment types.
+- Generic HTML: nested JSON-LD `JobPosting` records, including lists and `@graph`.
+  Without structured data, requires a title, substantial text, a specific posting
+  URL or requisition ID, and responsibilities plus requirements sections.
 
-## Installation (Windows PowerShell)
+Other detected platforms use generic HTML. Same-host job links are followed to
+depth three within a scheduled-page budget. Careers information without job
+evidence is recorded as a board/industry page and rejected by the jobs pipeline.
+Location and employment fields absent from the source remain empty.
 
-Use Python 3.11 or newer from the repository root:
+Optional `scrapy-playwright` rendering requires `-a render=true` and installed
+Chromium. API requests never request rendering. Browser rendering is not proven
+by the local tests and does not bypass access restrictions.
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python -m pip install -r requirements.txt
-```
+## Arguments and input handling
 
-SQLite is included with Python. Optional JavaScript rendering:
+| Argument | Default / purpose |
+| --- | --- |
+| `sources` | Repository-root `company_sources.csv`. |
+| `only` | All companies; otherwise comma-separated primary tickers. |
+| `max_jobs` | 200 examined postings per company, including rejected jobs. |
+| `max_pages` | 30 scheduled generic HTML pages per company. |
+| `source_status` | No status filter; optional explicit status selection. |
+| `render` | `false`; opt into installed Playwright for HTML requests. |
+| `career_fallback` | `false`; legacy explicit fallback to a career navigation URL. |
 
-```powershell
-.\.venv\Scripts\python -m pip install scrapy-playwright
-.\.venv\Scripts\python -m playwright install chromium
-```
-
-Only add `-a render=true` for a company whose HTML requires JavaScript. API
-requests never request rendering. No fixed browser waits are used.
-
-## Sources and platform support
-
-Read `company_name,ticker,career_site_url,job_listing_url,job_platform,source_status,sector,website_url`.
-Extra columns are allowed. `job_listing_url` is the crawl entry point. By default
-all source statuses are allowed for the starter dataset. Use
-`-a source_status=Verified` or a comma-separated list to restrict them.
-`-a career_fallback=true` explicitly permits testing/discovery from `career_site_url`.
-Missing or invalid entry URLs become rejection records. Existing public functions
-in `spiders/platforms.py` remain unchanged; detection uses the actual entry URL.
-
-* Workday: paginated CXS lists, individual details, requisition ID, public posting
-  URL (never a CXS detail URL), description, location, and employment type.
-* Greenhouse: the public board list with `content=true` contains descriptions and
-  all jobs; no undocumented pagination is added. Each job carries its actual ID
-  and `absolute_url`. See [Greenhouse documentation](https://docs.greenhouse.io/job-board.html).
-* Lever: public postings with `skip`/`limit` pagination; combines description,
-  responsibilities/requirements lists, location, commitment, ID, and hosted URL.
-  See [Lever documentation](https://github.com/lever/postings-api).
-* Custom HTML: nested JSON-LD `JobPosting` objects, including `@graph` and lists.
-  Without structured data, require a title, substantial description, a specific
-  job URL or requisition ID, and responsibilities plus requirements sections.
-  Same-host job links are followed to depth three within a scheduled-page cap.
-  Careers content alone produces `job_board` or `industry_page`, not a job.
-
-Other platforms currently use the custom HTML adapter. Location and employment
-fields absent from the source remain empty; nothing is inferred from company data.
-
-## Running and restarting
-
-Small live prototype (the exact command used for the recorded run):
+Normal manual-source runs leave `career_fallback=false` so missing listing URLs
+are skipped. Invalid/excluded rows are skipped regardless of a requested status
+filter. The CSV is read-only. Missing files, malformed headers/rows and invalid
+entry URLs are recorded with reasons; valid companies continue.
 
 ```powershell
-.\.venv\Scripts\python -m scrapy crawl jobs -a only=NVDA,ABNB -a max_jobs=60 -s CLOSESPIDER_TIMEOUT=100 -s LOG_LEVEL=INFO -s JOB_OUTPUT_DIR=data/live-demo
+python -m scrapy crawl jobs -a only=NVDA,ADBE -a max_jobs=20 -a max_pages=10 -s JOB_OUTPUT_DIR=data/sample
+python -m scrapy crawl jobs -a max_jobs=1000 -a max_pages=100 -s JOBDIR=data/checkpoints/full -s JOB_OUTPUT_DIR=data/full
 ```
 
-Full starter/expanded dataset, with persisted Scrapy request checkpoints:
+Use Ctrl+C once for a graceful stop. Rerun the same checkpoint command with the
+same sources and options to resume. Use a new checkpoint for a new refresh;
+counters reset per process. Do not share an output/checkpoint directory between
+concurrent crawlers. Scrapy settings control concurrency, delays, timeout, retries
+and `CS_RELEVANCE_THRESHOLD`. Robots rules, AutoThrottle and retry backoff remain
+enabled; authentication and anti-bot protections are not bypassed.
 
-```powershell
-.\.venv\Scripts\python -m scrapy crawl jobs -a max_jobs=1000 -a max_pages=100 -a source_status=Verified -s JOBDIR=data/checkpoints/full -s JOB_OUTPUT_DIR=data/full
-```
+## Filtering, analysis and storage
 
-Stop gracefully with Ctrl+C once; rerun the same command to resume the pending
-request queue. Keep the same sources and arguments for that JOBDIR. A new refresh
-crawl should use a new checkpoint directory while retaining the output directory.
-SQLite commits each accepted posting immediately, so restarts do not lose saved
-records. Company counters reset on restart: limits apply per process, not across
-the lifetime of a checkpoint. A hard kill may lose queued requests; a fresh crawl
-can rediscover them safely. Do not run two crawlers against the same output/JOBDIR.
+The analyzer extracts predefined skills, technologies, education and sections,
+and assigns weighted keyword categories. The pipeline validates company, title,
+description and HTTP(S) posting URL, then applies the existing CS score: a technical
+title contributes 0.65, technologies up to 0.25 and technical concepts up to 0.35,
+capped at one. Default threshold is 0.6. Excluded occupations are rejected;
+ambiguous analyst/support titles need two technologies and a technical concept.
+The score is a heuristic, not a probability. Non-CS records retain an explanation
+in failure storage. Responsibilities/requirements snippets are bounded to 1,500
+characters; full job descriptions are preserved.
 
-Use `-a sources=path.csv` for another compatible source file, and `-a only=NVDA,ABNB`
-for ticker selection. `max_jobs` caps examined API postings per company, including
-rejected non-CS jobs; it does not guarantee that many accepted jobs.
-
-Concurrency, timeout, per-domain delay, AutoThrottle, retries, and threshold are
-Scrapy settings and can be overridden with `-s`:
-
-```powershell
-.\.venv\Scripts\python -m scrapy crawl jobs -a only=NVDA -a max_jobs=20 -s CONCURRENT_REQUESTS=4 -s CONCURRENT_REQUESTS_PER_DOMAIN=1 -s DOWNLOAD_DELAY=2 -s DOWNLOAD_TIMEOUT=30 -s RETRY_TIMES=2 -s CS_RELEVANCE_THRESHOLD=0.7
-```
-
-Defaults: eight concurrent requests, one per domain, one-second delay, AutoThrottle,
-30-second timeout, two retries with nonblocking exponential waits capped at 30
-seconds. Robots rules remain enabled; authentication and anti-bot blocks are not
-bypassed. Scrapy logs request/item progress and exports run statistics.
-
-## Filtering, keywords, and schema
-
-`cs_filter.py` scores a technical role title at 0.65, distinct named technologies
-at 0.05 each (maximum 0.25), and distinct technical concepts at 0.12 each
-(maximum 0.35), capped at 1. The default threshold is 0.6. Evidence includes
-description, responsibilities, and requirements. Excluded occupational titles
-cap at 0.25 and are always rejected. Ambiguous data/security analyst and technical
-support titles additionally need two technologies and a technical concept.
-An incidental Python/AI mention cannot make an unrelated title pass.
-Every processed valid job gets `is_cs_job`, `cs_relevance_score`, and an evidence
-reason. Rejected jobs retain this information in the failure store.
-
-This is a deterministic heuristic score, not a probability. Review false positives
-and false negatives before broad use; a company sector never determines relevance.
-
-`skill_categories.py` preserves skills, technologies, education, responsibilities,
-requirements, `primary_category`, `categories`, `is_ai_job`, and `ai_signal`.
-Whole-term regexes prevent Java/JavaScript and Git/GitHub substring confusion.
-Technical vocabulary includes languages, frameworks, cloud, databases, DevOps,
-ML, and security tools. Five basic categories remain: AI, Software Engineering,
-Data, Cybersecurity, Cloud & Infrastructure; unmatched records use Other.
-Multiple categories are supported; advanced clustering is deferred.
-
-`items.JobRecord` documents the shared schema. Job and board URLs are separate,
-descriptions are not truncated, and missing fields remain empty. HTML section
-headings preserve line breaks for the existing section extractor. Exports retain
-the original crawl timestamp in UTC ISO 8601 format.
-
-## Deduplication and exports
-
-`normalization.py` scopes identity to company and platform ID, falling back to a
-canonical URL, then normalized title/location. URL normalization removes fragments
-and known tracking parameters while preserving job-identifying queries. A capture
-with no ID can merge with a posting at the same company/platform URL. Different
-known IDs remain distinct, even when titles, locations, or URLs match.
-
-`pipelines.JobPipeline` validates company, title, full description, and HTTP(S)
-posting URL. Invalid records, non-CS jobs, board/industry pages, and request errors
-are quarantined with reasons. Duplicates refresh their SQLite payload; they do not
-produce a second insert or feed row. URL-less records have a fallback identity
-utility but are rejected by the production pipeline.
+Identity is company-scoped and prefers platform ID, then canonical URL; fallback
+identity utilities use normalized title/location. Production records without a
+valid posting URL are rejected. Canonical URLs remove fragments and known tracking
+parameters. ID-less observations can merge with a known posting at the same
+company/platform URL; different known IDs remain distinct. Duplicates update
+SQLite and do not generate a second insert/feed row.
 
 Each output directory contains `jobs.sqlite3`, `cs_jobs.json`, `cs_jobs.csv`,
-`cs_jobs.jsonl`, `crawl_failures.csv`, and `crawl_summary.json`. Export replacement
-is atomic per file. CSV list values are JSON strings. SQLite is authoritative
-after interruption; rerunning a crawl regenerates exports. Use these accumulated
-exports for incremental data, since `-O` feeds contain only newly accepted items.
-The dataset records observations; refreshes do not mark expired jobs as closed.
+`cs_jobs.jsonl`, `crawl_failures.csv` and `crawl_summary.json`. Accepted postings
+commit immediately; exports replace individual files atomically at spider close.
+CSV list values are JSON strings. The summary's `sources` section stores selected,
+scheduled, missing, invalid, excluded and input-error counts plus skipped company
+identities/reasons. Failures are separate from accepted CS jobs.
 
-## Tests and demonstration evidence
+`-O output.json` adds a feed of newly accepted jobs for the current run. Accumulated
+`cs_jobs.*` exports include refreshed stored jobs. SQLite is authoritative after
+interruption; rerunning a crawl regenerates exports. Closed jobs are not reconciled.
+
+## Tests and evidence
 
 ```powershell
-.\.venv\Scripts\python -m pytest -q
-.\.venv\Scripts\python -m ruff check .
-.\.venv\Scripts\python -m industry_crawler.demo
+python -m pytest -q
+python -m ruff check .
+python -m industry_crawler.demo --output data/fixture-demo
 ```
 
-The offline demo reads starter companies, reanalyzes captured descriptions, applies
-filtering, rejects two captured non-CS records, deliberately repeats one job to
-exercise deduplication, and produces all exports in `data/fixture-demo`. It is
-explicitly labeled snapshot replay, not a fresh successful crawl. A second run
-updates the same database. Synthetic API/HTML unit fixtures also cover Lever,
-which has no company in the current starter file.
+Tests use mocked API/HTML records and temporary storage. The demo replays captured
+jobs and tests rejection/duplicates; it is not a live crawl. The preserved
+[live prototype summary](live-demo-summary.json) records an October 11, 2026
+NVIDIA/Airbnb run, not current availability. Historical source status evidence is
+not manual verification.
 
-Validation on Python 3.14 / Scrapy 2.19: `pytest -q` reported **36 passed**;
-`ruff check .` reported **All checks passed**. Ruff checks basic syntax/imports
-across the repository with two pre-existing unused-import exceptions in untouched
-scaffold/industry files. Repeating the offline demo retained 12 rows and reported
-13 duplicate updates on the second run. A no-source startup/export smoke check
-also completed. Optional rendering and a 500-company crawl were not tested.
+During the manual-source refactor on October 11, 2026, pytest reported 58 passing
+tests and Ruff passed. A new live run selected NVIDIA, Airbnb and 3M using the
+existing working CSV: five NVIDIA jobs were accepted, five postings were rejected
+as non-CS, four Airbnb pages were rejected as board records, and 3M was skipped
+for a missing listing URL. All six SQLite/export files were generated. Repeating
+the same run updated five duplicates and retained five stored jobs. The CSV and
+other pre-existing dataset edits were byte-for-byte unchanged. These observations
+do not demonstrate browser rendering or successful extraction across all employers.
 
-The October 11, 2026 live run returned 42 CS postings: 36 NVIDIA (Workday), six
-Airbnb (Greenhouse). It examined 120 postings and rejected 78, completed in 82.9
-seconds, and received 66 HTTP 200 responses including robots requests. See
-`docs/live-demo-summary.json`. Twelve actual accepted jobs and two actual rejected
-records were saved in `tests/fixtures/captured_jobs.json` for reproducible replay.
-Posting availability can change; these snapshots are not current vacancies.
+Separately, the offline CSV-to-Workday-callback-to-pipeline test used captured
+descriptions and mocked API responses. It retained one annotated CS job across
+two passes, rejected a non-CS record and a missing source, and observed three
+duplicate updates. No live request or current job availability is implied by that
+fixture result.
 
-## Limitations and integration contract
-
-Workday CXS is a publicly accessible site API, not a stable vendor contract.
-Tenant formats unsupported by the existing helper may require source-owner work.
-Generic HTML extraction is conservative, limited to same-host links and common
-schema/section headings. JavaScript rendering is opt-in and has not been exercised
-in the live prototype. API descriptions may contain employer boilerplate. Section
-extraction and category detection remain heuristic. Missing Workday paths or malformed
-API responses are quarantined as extraction failures rather than successful records.
-Authentication, restrictions, or unavailable APIs may prevent collection.
-
-The source developer should provide validated individual board URLs and maintain
-the existing `platforms.py` public functions; no source discovery or validation
-files were changed. More ATS-specific adapters, durable lifetime company counters,
-closed-job reconciliation, and multilingual parsing remain future work.
+Limits include changing APIs, unsupported tenant formats, dynamic or multilingual
+HTML, blocked sites, heuristic category/filter accuracy, per-process restart
+counters and missing closed-job reconciliation. Advanced clustering and academic
+integration remain future work.

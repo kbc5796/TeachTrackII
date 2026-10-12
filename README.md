@@ -1,238 +1,158 @@
 # TeachTrack II Industry Crawler
 
-TeachTrack II is a university research project that connects academic Computer Science coursework with industry job requirements. This repository contains the **industry crawler**: tools for collecting company job-board sources, extracting individual job postings, retaining CS-relevant roles, and organizing their technical requirements into structured research data.
+TeachTrack II is a university research project connecting Computer Science coursework with industry job requirements. This repository crawls individual job postings from a **manually maintained S&P 500 company-source CSV**, retains CS-relevant jobs, extracts technical keywords, assigns preliminary categories, and exports structured research data.
 
-The separate [academic crawler](https://github.com/GeovanieVasquez/cs-scraper-build) collects academic information. The two projects are intended to contribute to a future knowledge graph connecting course topics and skills to employer requirements. Academic crawler integration and knowledge graph construction are future work; this repository currently produces industry datasets.
+Our team researches and verifies company job-board links manually. The crawler consumes those links as input and never updates the company CSV. The separate [academic crawler](https://github.com/GeovanieVasquez/cs-scraper-build) will eventually contribute course topics and skills to a knowledge graph alongside these industry records. Academic integration, knowledge graph construction and advanced ML clustering are future work.
 
-## Table of contents
+## Contents
 
-- [Features](#features)
-- [Architecture](#architecture)
-- [Project structure](#project-structure)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Data and exports](#data-and-exports)
+- [Manually collect company job-board URLs](#manually-collect-company-job-board-urls)
+- [Install dependencies](#install-dependencies)
+- [Run the industry crawler](#run-the-industry-crawler)
+- [CS job filtering](#cs-job-filtering)
+- [Keyword extraction](#keyword-extraction)
+- [Categories](#categories)
+- [Storage and output](#storage-and-output)
 - [Testing](#testing)
-- [Current project status](#current-project-status)
-- [Limitations](#limitations)
-- [Future development](#future-development)
-- [Detailed documentation](#detailed-documentation)
+- [Project structure](#project-structure)
+- [Limitations and future work](#limitations-and-future-work)
 
-## Features
+## Manually collect company job-board URLs
 
-| Capability | Implemented behavior |
-| --- | --- |
-| S&P 500 source collection | Imports a dated, commit-pinned constituent CSV, records provenance and a SHA-256 hash, and groups multiple share classes by issuer CIK with a normalized-name fallback. |
-| Job-board discovery | Uses company article website links and observed career/job links to find candidate listing URLs within a bounded search budget. Failed discovery remains available for review. |
-| URL validation | Checks HTTP(S) syntax, redirects, robots rules, accessible listing evidence and company identity; records resolved URLs, attempt timestamps, evidence and failure reasons. HTTP 200 alone is insufficient. |
-| Platform detection | Recognizes Workday, Greenhouse, Lever, SmartRecruiters, iCIMS, Taleo, Oracle Recruiting, SAP SuccessFactors and Eightfold; other sites are labeled Custom. |
-| Individual job extraction | Uses Workday list/detail APIs, Greenhouse descriptions and Lever postings; generic HTML supports JSON-LD `JobPosting` data and conservative individual-job heuristics. |
-| CS relevance filtering | Scores technical titles, named technologies and technical concepts, rejects excluded occupations, and records a relevance score and explanation. The default threshold is `0.6`. |
-| Technical keyword extraction | Extracts skills, technologies, education, responsibilities and requirements using predefined vocabularies and regex rules. Term boundaries reduce substring confusion such as Java versus JavaScript. |
-| Preliminary categorization | Assigns one or more categories: AI, Software Engineering, Data, Cybersecurity, Cloud & Infrastructure, or Other. This is rule-based categorization, not trained ML clustering. |
-| Deduplication | Uses company-scoped platform IDs, canonical posting URLs and fallback identity utilities; repeated accepted jobs update SQLite instead of creating another record. |
-| Structured storage and exports | Saves accepted CS jobs transactionally in SQLite and exports JSON, CSV and JSON Lines; rejected records and crawl summaries are stored separately. |
-| Automated tests | Deterministic tests cover source collection, validation, extraction adapters, relevance filtering, keywords, deduplication and storage. |
+The workflow is: manually research company sources → edit `company_sources.csv` → crawl individual postings → filter CS relevance → save technical keywords/categories → export research data.
 
-An independent `industry` spider also collects relevant company website pages using sitemap/link discovery and keyword scoring. Its industry-page records are separate from the CS job storage pipeline.
+The committed source dataset contains **500 companies representing 503 tickers**, with **202 collected listing URLs and 298 missing listing URLs**. These are October 2026 collection counts, not a claim that all sources are current or manually verified. Local team edits may increase coverage. Keep every company row even when its URL is missing.
 
-Detection does not imply a dedicated extraction adapter. Workday, Greenhouse and Lever have API adapters; the other platforms use generic HTML extraction. Optional Playwright rendering is implemented for HTML requests but is not required for API crawls. Source coverage, extraction across all companies, and end-to-end integration remain incomplete.
+Open `company_sources.csv` in a text editor or spreadsheet application. Preserve this header and all existing additional columns:
 
-## Architecture
-
-This diagram represents the research workflow. In the implementation, the jobs spider adds keyword/category fields during extraction, and the item pipeline calculates CS relevance before saving accepted records. Source collection and job extraction are separate commands connected through `company_sources.csv`; there is no automatic orchestration service. The jobs spider only restricts source statuses when `source_status` is explicitly supplied.
-
-## Project structure
-
-```text
-TeachTrackII/
-├── company_sources.csv          # Company metadata, listing URLs and validation evidence
-├── requirements.txt             # Scrapy and development checks
-├── requirements-sources.txt     # Source collection HTTP/parsing tools and checks
-├── pyproject.toml               # Ruff and pytest configuration
-├── scrapy.cfg                   # Scrapy project entry point
-├── industry_crawler/
-│   ├── sources/
-│   │   ├── __main__.py           # import / discover / validate / report CLI
-│   │   └── core.py               # Constituent import, discovery, HTTP validation and reports
-│   ├── spiders/
-│   │   ├── jobs.py               # Individual job extraction
-│   │   ├── industry.py           # Independent industry-page crawler
-│   │   ├── platforms.py          # Platform detection and API URL helpers
-│   │   └── skill_categories.py   # Keywords, education, sections and categories
-│   ├── cs_filter.py              # Explainable CS relevance scoring
-│   ├── normalization.py          # Canonical URLs and job identities
-│   ├── pipelines.py              # Job validation, filtering, deduplication and persistence
-│   ├── storage.py                # SQLite storage and exports
-│   ├── items.py                  # Job record schema
-│   ├── settings.py               # Crawl limits, throttling and pipeline settings
-│   ├── retry.py                  # Nonblocking retry backoff
-│   ├── job_errors.py             # Extraction-error quarantine
-│   ├── middlewares.py            # Scrapy middleware scaffold
-│   └── demo.py                   # Offline replay of captured job fixtures
-├── data/sp500/
-│   ├── constituents.csv          # Saved upstream constituent snapshot
-│   └── provenance.json           # Source commit, dates and hash
-├── reports/sources/
-│   ├── summary.json              # Source coverage and validation totals
-│   ├── validation.csv            # All company validation records
-│   └── manual-review.csv         # Every non-Verified company
-├── tests/
-│   ├── test_sources.py           # Mocked source collection/validation tests
-│   ├── test_jobs.py              # Extraction, filtering and storage tests
-│   └── fixtures/captured_jobs.json
-└── docs/
-    ├── source-collection.md      # Source discovery, validation and review workflow
-    ├── job-crawler.md            # Job adapters, schema, filtering and restart behavior
-    └── live-demo-summary.json    # Recorded October 2026 live prototype results
+```csv
+company_name,ticker,career_site_url,job_listing_url,job_platform,source_status,sector,website_url
 ```
 
-Runtime output directories under `data/` are generally Git-ignored. Root-level JSON captures such as `job_data.json` and `test.json` are historical outputs and should not be treated as current, validated CS-only datasets.
+| Field | Team maintenance |
+| --- | --- |
+| `company_name`, `ticker` | Keep the existing issuer identity. The additional `tickers` column preserves multiple share classes. |
+| `website_url` | Official company homepage; it is not the jobs crawl entry point. |
+| `career_site_url` | Official careers navigation page; it may contain company information without actual vacancies. |
+| `job_listing_url` | Direct official job-search/listing page or employer ATS board. Leave it empty when the team has not found a suitable URL. |
+| `job_platform` | Optional platform annotation. The jobs spider detects its adapter from the entry URL. |
+| `source_status` | Maintain the team's review status after manual research; it does not need to be Verified for crawling. |
 
-## Installation
+For each company, follow its official careers links, confirm that the destination displays actual job listings for that employer, and copy the exact URL. A corporate homepage or generic careers information page is not a replacement for a listing URL. Retain CSV quoting for names/values containing commas, and save as UTF-8 CSV without changing ticker text or deleting additional columns.
 
-Use **Python 3.11 or newer**, Git and Windows PowerShell. Run subsequent commands from the repository root with the virtual environment active.
+Existing `source_status`, `last_verification_date`, `evidence` and related fields originate from historical automated runs. **Their existing Verified labels are not manual verification.** When reviewing a row, update its status and add optional `reviewed_by` and `manual_review_date` columns to record the human review separately. Keep historical fields for reference. Suggested manual statuses include Needs Review, Verified, Blocked, No Listings Found, Invalid and Excluded.
+
+The default jobs crawl attempts every selected company with a valid-looking listing URL, regardless of historical Verified/Unverified/Blocked labels. It skips missing URLs, malformed inputs, and rows explicitly marked `Invalid` or `Excluded`; an optional `excluded` column set to `true`, `yes` or `1` also excludes a row. Skips are recorded with company identity and reason. Network failures are logged and stored without editing the CSV.
+
+See [the manual source guide](docs/manual-sources.md) for collaboration and review details. The files under `data/sp500/` and `reports/sources/` are preserved historical artifacts, not active source-management tools or current manual review results.
+
+## Install dependencies
+
+Use Python 3.11 or newer, Git and Windows PowerShell:
 
 ```powershell
 git clone https://github.com/kbc5796/TeachTrackII.git
 Set-Location TeachTrackII
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt -r requirements-sources.txt
+python -m pip install -r requirements.txt
 ```
 
-SQLite is included with Python. Install both requirements files to use the source collection tools and Scrapy spiders together.
+If activation is unavailable, use `.\.venv\Scripts\python.exe` instead of `python` in subsequent commands. SQLite is included with Python. Scrapy and the test/lint dependencies are declared in `requirements.txt`.
 
-If PowerShell prevents activation, run the same Python commands through `.\.venv\Scripts\python.exe` directly, for example:
+### Optional browser rendering
 
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-sources.txt
-```
-
-### Optional JavaScript rendering
-
-For HTML sites that need browser rendering:
+Workday, Greenhouse and Lever API requests do not require a browser. For HTML sites that need JavaScript rendering, install:
 
 ```powershell
 python -m pip install scrapy-playwright
 python -m playwright install chromium
 ```
 
-Then add `-a render=true` to a `jobs` crawl. Rendering is opt-in; API requests do not request browser rendering, and the source discovery/validation CLI does not use Playwright. Browser rendering does not bypass access restrictions. Optional rendering has not been verified in the recorded live prototype.
+Add `-a render=true` to a jobs crawl only when needed. Playwright rendering is opt-in and does not bypass robots, authentication or CAPTCHA restrictions. Browser compatibility has not been verified by the automated fixture tests.
 
-## Usage
+## Run the industry crawler
 
-### 1. Import the S&P 500 companies
+Run these commands from the repository root with the environment active. Use the **`jobs` spider** for CS job collection.
 
-```powershell
-python -m industry_crawler.sources import
-```
-
-The importer checks the latest commit affecting the constituent CSV in [datasets/s-and-p-500-companies](https://github.com/datasets/s-and-p-500-companies), rejects an upstream date older than 14 days, and saves the commit-pinned snapshot and provenance under `data/sp500/`. The upstream list is derived from Wikipedia and is not a licensed S&P feed. Existing source fields are merged into the new issuer list.
-
-To import the saved snapshot without network access:
+One company:
 
 ```powershell
-python -m industry_crawler.sources import --offline
+python -m scrapy crawl jobs -a only=NVDA -a max_jobs=20 -s JOB_OUTPUT_DIR=data/nvidia
 ```
 
-Offline import requires `data/sp500/constituents.csv` and `provenance.json` with a matching hash. Git line-ending conversion on Windows can change the checked-in CSV bytes and cause the integrity check to fail; generate a fresh local snapshot with the online importer before using `--offline` in that case.
-
-Import, discovery and validation update `company_sources.csv`; source commands generate reports under `reports/sources/` by default. These operations can replace the recorded run's files. Use `--csv`, `--data-dir` and `--report-dir` to work with separate copies when preserving a snapshot.
-
-### 2. Discover job-board URLs
+Multiple companies:
 
 ```powershell
-python -m industry_crawler.sources discover --workers 8 --timeout 8
+python -m scrapy crawl jobs -a only=NVDA,ADBE -a max_jobs=30 -a max_pages=15 -s JOB_OUTPUT_DIR=data/sample
 ```
 
-Discovery follows published website/career links and records candidate URLs and provenance. A generic careers page is a navigation seed, not proof of an accessible job board. Discovery does not constitute fresh verification of a candidate.
-
-### 3. Validate sources and generate reports
+Limited test crawl, including 3M as a missing-URL example in the saved dataset:
 
 ```powershell
-python -m industry_crawler.sources validate --workers 8 --timeout 8
-python -m industry_crawler.sources report
+python -m scrapy crawl jobs -a only=NVDA,ABNB,MMM -a max_jobs=10 -a max_pages=5 -s CLOSESPIDER_TIMEOUT=75 -s JOB_OUTPUT_DIR=data/test-crawl
 ```
 
-The CLI supports `Verified`, `Unverified`, `Needs Review`, `Blocked`, `Invalid` and `No Listings Found`. A verification timestamp records an attempt, including a missing-source check; it does not imply success. Review unresolved sources with:
+Larger crawl of all companies with usable listing URLs:
 
 ```powershell
-Import-Csv reports/sources/manual-review.csv | Select-Object company_name,ticker,source_status,failure_reason
+python -m scrapy crawl jobs -a max_jobs=1000 -a max_pages=100 -s JOBDIR=data/checkpoints/full -s JOB_OUTPUT_DIR=data/full
 ```
 
-Use `--only NVDA,MSFT` or `--limit 10` for a subset. Requests remain serial and delayed per origin even with multiple company workers; robots restrictions, rate limits and inaccessible robots policies are recorded rather than bypassed.
+`max_jobs` limits examined postings per company, including jobs later rejected as non-CS; it is not a target number of accepted jobs. `max_pages` limits scheduled generic HTML pages. `only` selects primary tickers; `-a sources=path/to/companies.csv` selects another compatible input file. `-s CS_RELEVANCE_THRESHOLD=0.7` changes the relevance threshold. The optional `source_status` argument can restrict a run explicitly, but no Verified restriction is enabled by default.
 
-### 4. Run a small CS job crawl
+For a checkpointed crawl, stop gracefully with Ctrl+C once, then rerun the same command with the same sources and arguments. For a new refresh, use a new checkpoint directory. Per-company counters reset on process restart. Only one crawler should use each output/checkpoint directory at a time.
 
-```powershell
-python -m scrapy crawl jobs -a only=NVDA -a source_status=Verified -a max_jobs=20 -a max_pages=10 -s CLOSESPIDER_TIMEOUT=100 -s JOB_OUTPUT_DIR=data/small-crawl
-```
+The separate `industry` spider remains available for company website research pages. It is not the individual-job/CS storage workflow described here; see [job crawler details](docs/job-crawler.md).
 
-This selects NVIDIA from the current source CSV, requires its recorded source status to be Verified, and applies the CS pipeline. It does not guarantee current availability or 20 accepted CS jobs. `max_jobs` limits examined postings per company, including jobs later rejected by the filter; `max_pages` caps scheduled generic HTML pages.
+## CS job filtering
 
-### 5. Run a larger crawl and resume
+`cs_filter.py` applies a weighted, explainable relevance score based on technical role titles, named technologies, and technical concepts in the description, responsibilities and requirements. The default threshold is `0.6`. Excluded occupational titles are rejected, and ambiguous analyst/support roles need additional technical evidence.
 
-```powershell
-python -m scrapy crawl jobs -a source_status=Verified -a max_jobs=1000 -a max_pages=100 -s JOBDIR=data/checkpoints/full -s JOB_OUTPUT_DIR=data/full
-```
+The existing rules cover software engineering, AI/ML, data engineering/science, cybersecurity, cloud, DevOps, site reliability, network, systems, database and technical IT roles. Unrelated retail, sales, healthcare, accounting, manufacturing and other non-CS postings are rejected. Each processed valid job receives `is_cs_job`, `cs_relevance_score` and `cs_filter_reason`; rejected records retain their reason in failure storage. Company sector does not determine relevance. This heuristic requires review for false positives and negatives.
 
-Without `only`, this selects all companies whose recorded status is Verified. Source verification is not rerun automatically. Omitting `source_status` allows all source statuses, so keeping it explicit is recommended for research collection.
+## Keyword extraction
 
-Stop gracefully with Ctrl+C once and rerun the same command to resume the persisted request queue. Keep the same sources and arguments for that checkpoint. For a new refresh, use a new `JOBDIR` and retain the output directory if you want accumulated jobs. Per-company counters reset on restart, so limits apply per process. Run only one crawler against each output/checkpoint directory.
+`skill_categories.py` uses predefined vocabularies and term-boundary regexes to extract programming languages, frameworks, cloud platforms, databases, DevOps tools, AI/ML technologies, cybersecurity tools, technical skills and education requirements. Examples include Python, Java, React, AWS, SQL, Docker, Kubernetes, PyTorch and security tools.
 
-Scrapy settings can tune concurrency, delays, timeouts and the CS threshold:
+The analyzer also extracts responsibilities and qualifications/requirements from recognizable section headings. Job descriptions are retained in full; extracted section snippets are bounded. Missing source fields remain empty rather than being inferred. Rules reduce substring confusion such as Java versus JavaScript but do not provide complete multilingual or semantic understanding.
 
-```powershell
-python -m scrapy crawl jobs -a only=NVDA -a source_status=Verified -a max_jobs=20 -s CONCURRENT_REQUESTS=4 -s DOWNLOAD_DELAY=2 -s DOWNLOAD_TIMEOUT=30 -s CS_RELEVANCE_THRESHOLD=0.7 -s JOB_OUTPUT_DIR=data/tuned-crawl
-```
+## Categories
 
-Defaults include eight concurrent requests, one per domain, a one-second delay, AutoThrottle, a 30-second timeout and two retries with exponential backoff. Robots rules remain enabled.
+Jobs may receive multiple preliminary categories with a primary category:
 
-### 6. Export job data
+- AI
+- Software Engineering
+- Data
+- Cybersecurity
+- Cloud & Infrastructure
 
-The jobs pipeline automatically exports the accumulated SQLite dataset when the spider closes. To additionally write a Scrapy feed of newly accepted records:
+Unmatched records use Other. AI indicators include `is_ai_job` and `ai_signal`. Categories are keyword-based; advanced clustering is not implemented.
 
-```powershell
-python -m scrapy crawl jobs -a only=NVDA -a source_status=Verified -a max_jobs=20 -s JOB_OUTPUT_DIR=data/export-demo -O data/export-demo/new_jobs.json
-```
+## Storage and output
 
-Use `.csv` or `.jsonl` instead of `.json` for other Scrapy feed formats. `-O` overwrites that feed and includes newly accepted items from the current run; refreshed duplicates are saved in SQLite but dropped from the feed. Use `cs_jobs.*` for accumulated exports. There is no separate standalone export CLI.
-
-### Offline demonstration
-
-```powershell
-python -m industry_crawler.demo --output data/fixture-demo
-```
-
-This replays captured fixtures through analysis, CS filtering and storage, including rejection and duplicate handling. It is an offline snapshot demonstration, not a fresh job crawl.
-
-### Independent industry-page crawl
-
-```powershell
-python -m scrapy crawl industry -a only=NVDA,MSFT -a max_pages=15 -O data/industry-pages.json
-```
-
-This collects scored company website pages and keyword annotations. It does not use the jobs spider's CS relevance filter or SQLite job pipeline. The industry spider's default user-agent contains a contact placeholder; supply an appropriate research identifier with `-s USER_AGENT="TeachTrackII research crawler (contact: your-address)"` when deploying it.
-
-## Data and exports
-
-`company_sources.csv` contains company name, primary/all tickers, sector, CIK, website/career/listing URLs, detected platform, source status, provenance, verification attempt date, final URL, evidence and failure details.
-
-Accepted job records include company metadata, platform, board URL, posting URL, job ID, title, location, employment type, description, responsibilities, requirements, skills, technologies, education, categories, AI indicators, CS score/reason and a UTC crawl timestamp. Descriptions are retained in full; responsibility/requirement section extraction is bounded. Source fields that are absent remain empty.
+The jobs pipeline validates individual records, applies CS filtering, normalizes URLs, deduplicates accepted postings and stores them transactionally in SQLite. Company name, ticker, sector, platform, posting/board URLs, job identity, title, location, employment type, technical annotations and UTC crawl timestamps are retained for future academic integration.
 
 Each `JOB_OUTPUT_DIR` contains:
 
-| File | Purpose |
+| File | Contents |
 | --- | --- |
-| `jobs.sqlite3` | Authoritative incremental job and failure storage. |
-| `cs_jobs.json` | Accumulated accepted CS jobs as a JSON array. |
-| `cs_jobs.csv` | Tabular export; list/dict values are encoded as JSON strings. |
+| `jobs.sqlite3` | Authoritative accumulated accepted jobs and rejected/error records. |
+| `cs_jobs.json` | Accepted CS jobs as a JSON array. |
+| `cs_jobs.csv` | Tabular jobs; list/dict fields are encoded as JSON strings. |
 | `cs_jobs.jsonl` | One accepted job per line. |
-| `crawl_failures.csv` | Rejected jobs, invalid items, board/industry pages and request/extraction errors. |
-| `crawl_summary.json` | Stored-job/failure totals and available Scrapy run statistics. |
+| `crawl_failures.csv` | Non-CS jobs, invalid records, skipped sources and request/extraction failures. |
+| `crawl_summary.json` | Stored totals, crawl statistics, and a `sources` section listing skipped companies and reasons. |
 
-Accepted postings commit immediately. Export files are replaced atomically per file at spider close; after an interrupted run, SQLite is authoritative and another crawl regenerates exports. Different known job IDs remain distinct even if their titles or URLs match. Refreshes update observed postings but do not mark expired jobs as closed.
+Exports are generated at spider close and replaced atomically per file. Accepted records commit immediately; SQLite remains authoritative after interruption. Duplicates refresh stored payloads rather than adding another posting. Different known platform job IDs remain distinct. Refreshing a crawl does not reconcile closed/expired jobs.
+
+An additional Scrapy feed can export newly accepted items from one run:
+
+```powershell
+python -m scrapy crawl jobs -a only=NVDA -a max_jobs=20 -s JOB_OUTPUT_DIR=data/export-demo -O data/export-demo/new_jobs.json
+```
+
+Use `.csv` or `.jsonl` for other feed formats. `-O` overwrites that feed, and duplicate updates do not produce new feed rows; use `cs_jobs.*` for accumulated output. Historical root-level JSON captures are not current validated CS-only datasets.
 
 ## Testing
 
@@ -242,53 +162,38 @@ python -m ruff check .
 git diff --check
 ```
 
-Pytest uses mocked HTTP/API responses and captured fixtures, with temporary storage for persistence tests. It covers constituent import and deduplication, CSV formatting, URL/platform detection, redirects, robots and validation statuses, job adapters, CS filtering, keyword boundaries, categories, duplicate updates and exports. Ruff configuration is in `pyproject.toml`; two unused-import exceptions apply to existing scaffold/industry files. Passing these checks does not establish live availability of every source or browser-rendering compatibility.
+Tests cover Workday/Greenhouse/Lever and custom extraction, pagination, platform detection, weighted filtering, keywords/categories, deduplication, storage/exports, CSV structure, missing and invalid sources, explicit exclusions, and input immutability. They use local fixtures and temporary outputs; passing tests does not establish current access to live job boards.
 
-During this README update, Python 3.13 with Scrapy 2.19 ran **94 passing tests**. The repository-wide Ruff check reported two existing `E731` lambda-assignment violations in `tests/test_sources.py`; the documentation change does not fix or suppress them.
+Replay captured jobs through filtering and exports without contacting employers:
 
-## Current project status
+```powershell
+python -m industry_crawler.demo --output data/fixture-demo
+```
 
-The source collection results below are from the **October 11, 2026 run**, using an October 9 upstream snapshot. They are historical research observations, not permanent live counts:
+This is a captured-snapshot demonstration, not a fresh live crawl. See [testing and crawl details](docs/job-crawler.md) for the distinction.
 
-| Metric | Recorded result |
-| --- | ---: |
-| Unique S&P 500 companies | 500 |
-| Tickers, including multiple share classes | 503 |
-| Retained job-board/listing URLs | 202 |
-| Verified job boards | 56 |
-| Unresolved company sources | 444 |
+## Project structure
 
-The unresolved total includes 363 Needs Review, 43 Unverified, 34 Blocked and four No Listings Found; the run reported zero Invalid URLs. See the saved [source summary](reports/sources/summary.json), [full validation records](reports/sources/validation.csv) and [manual review queue](reports/sources/manual-review.csv). Missing-source records received an attempt timestamp, not a successful live HTTP verification.
+| Path | Purpose |
+| --- | --- |
+| `company_sources.csv` | Team-maintained company/source input, including historical metadata. |
+| `industry_crawler/company_input.py` | Read-only CSV structure checks; no HTTP requests or source updates. |
+| `industry_crawler/spiders/jobs.py` | Individual job adapters, pagination and missing-source handling. |
+| `industry_crawler/spiders/platforms.py` | Platform detection, API helpers and HTML text utilities. |
+| `industry_crawler/spiders/skill_categories.py` | Keywords, education, sections and preliminary categories. |
+| `industry_crawler/cs_filter.py` | Weighted CS relevance scoring. |
+| `industry_crawler/pipelines.py`, `storage.py`, `normalization.py` | Validation, deduplication, SQLite and exports. |
+| `industry_crawler/settings.py`, `retry.py`, `job_errors.py` | Responsible crawling, retries and failure handling. |
+| `industry_crawler/spiders/industry.py` | Independent company website research spider. |
+| `tests/` | Job, CSV and platform tests, plus captured job fixtures. |
+| `requirements.txt`, `pyproject.toml`, `scrapy.cfg` | Dependencies, checks and Scrapy configuration. |
+| `docs/manual-sources.md`, `docs/job-crawler.md` | Manual source workflow and crawler reference. |
+| `data/sp500/`, `reports/sources/` | Preserved historical data; no active generators remain. |
 
-The repository also contains a [recorded October 2026 job prototype](docs/live-demo-summary.json): 42 accepted CS postings from NVIDIA and Airbnb, out of 120 examined postings. This is saved evidence from that run; those jobs may no longer be available.
+## Limitations and future work
 
-Both source collection and the CS job crawler are present on `main`. They share the source CSV, but verification coverage and reliable crawler integration across the full company list are ongoing. Approximately 500 verified job-board sources remains a target; it has not been achieved. Advanced AI/ML grouping, academic integration and a knowledge graph are not implemented.
+The company CSV is intentionally incomplete and needs manual research. A saved listing URL or historical Verified label does not guarantee current access. Workday, Greenhouse and Lever have API extraction adapters; SmartRecruiters, iCIMS, Taleo, Oracle Recruiting, SAP SuccessFactors, Eightfold and Custom sites rely on generic HTML support and may require adapter work. Detection is not a guarantee of extraction.
 
-## Limitations
+JavaScript-heavy websites, unsupported layouts, changing APIs, robots restrictions, rate limiting, authentication and blocked boards can prevent collection. Generic HTML follows same-host links within depth/page limits. The crawler records failures and continues without changing sources or bypassing restrictions.
 
-- **JavaScript websites:** Source discovery/validation uses HTTP responses without browser rendering. The jobs spider has optional Playwright support, but it has not been verified in the recorded live prototype and does not guarantee extraction from every dynamic site.
-- **Robots and access restrictions:** Disallowed paths, authentication, CAPTCHA challenges and blocked job boards can prevent collection. The tools do not attempt to bypass these protections.
-- **Rate limiting and transient failures:** Delays, throttling and bounded retries reduce request pressure but cannot ensure access. Source validation suspends an origin after HTTP 429 for that run.
-- **Platform coverage:** Detection covers more vendors than dedicated extraction. Other ATS platforms rely on generic HTML; unsupported layouts, alternate Workday tenant paths and API changes can require adapter work or manual review.
-- **Unverified sources:** Candidate URLs can be inaccessible, stale or ambiguous. A source marked Verified is a dated observation and does not guarantee successful extraction or CS jobs on a later run. Discovery is bounded, and upstream freshness is checked by commit date rather than a licensed index feed.
-- **CS filtering:** The score is a deterministic heuristic, not a probability or learned classifier. English title patterns, finite vocabularies, ambiguous roles and employer boilerplate can cause false positives or negatives. Company sector does not determine relevance.
-- **Extraction and persistence:** Generic HTML follows same-host links within depth/page limits. Category and section extraction are heuristic, restart limits are per process, and expired-job reconciliation is not implemented.
-
-## Future development
-
-- Expand verified company source coverage and resolve the manual review queue.
-- Improve extraction accuracy, ATS-specific adapters and source-to-crawler integration tests.
-- Evaluate CS relevance and keyword quality against reviewed research samples.
-- Develop advanced AI/ML job grouping beyond the current keyword categories.
-- Integrate the separate academic crawler's course topics and skill data.
-- Build a knowledge graph connecting academic concepts, technical skills and industry requirements.
-
-## Detailed documentation
-
-- [Source collection, validation and manual review](docs/source-collection.md)
-- [CS job crawler, filtering, storage and restart behavior](docs/job-crawler.md)
-- [Recorded source validation summary](reports/sources/summary.json)
-- [Recorded live job prototype](docs/live-demo-summary.json)
-- [Academic crawler repository](https://github.com/GeovanieVasquez/cs-scraper-build)
-
-The detailed feature documents include development-time audits and recorded test/live-run evidence. Use the current implementation and saved reports when distinguishing those historical observations from present coverage.
+Future work includes completing manually reviewed source coverage, improving extraction and CS filtering accuracy, refining preliminary categories, integrating the academic crawler, and building the research knowledge graph. Advanced AI/ML grouping is deferred.

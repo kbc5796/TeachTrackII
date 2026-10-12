@@ -1,4 +1,0 @@
-requests>=2.32,<3
-beautifulsoup4>=4.12,<5
-pytest>=8,<10
-ruff>=0.9,<1
