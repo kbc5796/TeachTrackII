@@ -1,0 +1,14 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Untouched scaffold and the independently owned industry spider.
+"industry_crawler/middlewares.py" = ["F401"]
+"industry_crawler/spiders/industry.py" = ["F401"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

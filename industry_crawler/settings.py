@@ -85,3 +85,16 @@ DOWNLOAD_DELAY = 1
 
 # Set settings whose default value is deprecated to a future-proof value
 FEED_EXPORT_ENCODING = "utf-8"
+
+CONCURRENT_REQUESTS = 8
+AUTOTHROTTLE_ENABLED = True
+AUTOTHROTTLE_START_DELAY = 1
+AUTOTHROTTLE_MAX_DELAY = 60
+DOWNLOAD_TIMEOUT = 30
+RETRY_TIMES = 2
+CS_RELEVANCE_THRESHOLD = 0.6
+JOB_OUTPUT_DIR = "data"
+USER_AGENT = "TeachTrackII research crawler"
+TELNETCONSOLE_ENABLED = False
+REMOTE_CONTROL_ENABLED = False
+DOWNLOADER_MIDDLEWARES = {"industry_crawler.retry.BackoffMiddleware": 550}

@@ -3,3 +3,6 @@ __pycache__/
 venv/
 .venv/
 *_test.json
+data/
+.pytest_cache/
+.ruff_cache/

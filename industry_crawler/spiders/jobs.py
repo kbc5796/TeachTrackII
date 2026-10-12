@@ -1,6 +1,7 @@
 import csv
 import json
 import re
+from importlib.util import find_spec
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,35 +9,21 @@ from urllib.parse import urlparse
 
 import scrapy
 
-try:
-    from .skill_categories import analyze_job
-    from .platforms import (
-        detect_platform, workday_api_base, greenhouse_board,
-        lever_company, html_to_text, page_text,
-    )
-except ImportError:                      # if the files sit outside a package
-    from skill_categories import analyze_job
-    from platforms import (
-        detect_platform, workday_api_base, greenhouse_board,
-        lever_company, html_to_text, page_text,
-    )
+from ..normalization import canonical_url
+from .skill_categories import analyze_job
+from .platforms import (
+    detect_platform, workday_api_base, greenhouse_board,
+    lever_company, html_to_text,
+)
 
 # Browser rendering is optional and only used for "Custom" career sites.
-try:
-    from scrapy_playwright.page import PageMethod
-    HAVE_PLAYWRIGHT = True
-except ImportError:
-    HAVE_PLAYWRIGHT = False
+HAVE_PLAYWRIGHT = find_spec("scrapy_playwright") is not None
 
 
 # company_sources.csv lives in the outer project folder.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CSV_FILE = PROJECT_ROOT / "company_sources.csv"
 
-JOB_SIGNALS = [
-    "job", "jobs", "career", "careers", "position", "requisition",
-    "responsibilities", "qualifications", "requirements",
-]
 # On custom sites only follow links that look job-related.
 LINK_HINTS = ["job", "career", "position", "opening", "requisition", "search"]
 SKIP_EXT = (".pdf", ".jpg", ".jpeg", ".png", ".gif", ".zip", ".mp4", ".mp3")
@@ -50,9 +37,9 @@ class JobsSpider(scrapy.Spider):
     """
     Reads company_sources.csv and collects one record per job.
 
-    Workday / Greenhouse / Lever  -> their JSON APIs (no browser).
-    Everything else (Custom)      -> normal HTML, rendered with Playwright
-                                     if scrapy-playwright is installed.
+    Workday / Greenhouse / Lever use JSON APIs without a browser.
+    Custom HTML uses JobPosting data or strong individual-job indicators.
+    Playwright requires an explicit render=true option.
 
     Test small first:
         scrapy crawl jobs -a only=NVDA,MSFT -a max_jobs=20 -O test.json
@@ -64,12 +51,8 @@ class JobsSpider(scrapy.Spider):
     custom_settings = {
         # --- responsible crawling (research doc, sections 6 and 7) ---
         "ROBOTSTXT_OBEY": True,
-        "DOWNLOAD_DELAY": 1,
-        "CONCURRENT_REQUESTS_PER_DOMAIN": 2,
-        "AUTOTHROTTLE_ENABLED": True,
-        "AUTOTHROTTLE_START_DELAY": 1,
-        "AUTOTHROTTLE_MAX_DELAY": 5,
-        "USER_AGENT": "TeachTrackBot (university research; contact: YOUR_EMAIL_HERE)",
+        "ITEM_PIPELINES": {"industry_crawler.pipelines.JobPipeline": 300},
+        "SPIDER_MIDDLEWARES": {"industry_crawler.job_errors.JobErrorMiddleware": 550},
         # Limits are per company in this spider (max_jobs / max_pages),
         # not a global page count, so these two are intentionally off.
         "DEPTH_LIMIT": 0,
@@ -88,23 +71,34 @@ class JobsSpider(scrapy.Spider):
             "CONCURRENT_REQUESTS": 4,
         })
 
-    def __init__(self, only=None, max_jobs=200, max_pages=30, *args, **kwargs):
+    def __init__(self, only=None, max_jobs=200, max_pages=30, sources=None,
+                 source_status=None, career_fallback="false", render="false", *args, **kwargs):
         super().__init__(*args, **kwargs)
         # only="MSFT,NVDA" limits the run to those tickers (for testing).
         self.only = {t.strip().upper() for t in only.split(",")} if only else None
         self.max_jobs = int(max_jobs)      # jobs per company (API platforms)
         self.max_pages = int(max_pages)    # pages per company (custom sites)
         self.counts = defaultdict(int)
+        self.pages = defaultdict(int)
+        self.seen_pages = defaultdict(set)
+        self.sources = Path(sources) if sources else CSV_FILE
+        self.statuses = {s.strip().lower() for s in source_status.split(",")} if source_status else None
+        self.career_fallback = str(career_fallback).lower() == "true"
+        self.render = str(render).lower() == "true"
+        if self.render and not HAVE_PLAYWRIGHT:
+            raise ValueError("Install scrapy-playwright to use render=true")
+        if self.max_jobs <= 0 or self.max_pages <= 0:
+            raise ValueError("Crawl limits must be positive")
 
     # ------------------------------------------------------------------
     # Start: read the CSV and route each company by platform.
     # ------------------------------------------------------------------
     async def start(self):
-        if not CSV_FILE.exists():
-            self.logger.error("CSV file not found: %s", CSV_FILE)
+        if not self.sources.exists():
+            self.logger.error("CSV file not found: %s", self.sources)
             return
 
-        with open(CSV_FILE, "r", encoding="utf-8-sig", newline="") as f:
+        with open(self.sources, "r", encoding="utf-8-sig", newline="") as f:
             rows = list(csv.DictReader(f))
 
         for row in rows:
@@ -112,12 +106,15 @@ class JobsSpider(scrapy.Spider):
             if self.only and ticker not in self.only:
                 continue
 
+            if self.statuses and row.get("source_status", "").lower() not in self.statuses:
+                continue
+
             url = (
                 (row.get("job_listing_url") or "").strip()
-                or (row.get("career_site_url") or "").strip()
+                or ((row.get("career_site_url") or "").strip() if self.career_fallback else "")
             )
-            if not url.startswith(("http://", "https://")):
-                self.logger.warning("Skipping invalid URL for %s: %s", ticker, url)
+            if not canonical_url(url):
+                yield {"record_type": "skipped", **row, "source_url": url, "reason": "invalid source URL"}
                 continue
 
             platform = detect_platform(url)
@@ -143,13 +140,15 @@ class JobsSpider(scrapy.Spider):
                 company = lever_company(url)
                 if company:
                     yield scrapy.Request(
-                        f"https://api.lever.co/v0/postings/{company}?mode=json",
+                        f"https://api.lever.co/v0/postings/{company}?mode=json&skip=0&limit=100",
                         callback=self.parse_lever,
                         errback=self.on_error, cb_kwargs=kw,
                     )
                     continue
 
             # Everything else: crawl the HTML page(s).
+            self.pages[self.key(row)] = 1
+            self.seen_pages[self.key(row)].add(canonical_url(url))
             yield scrapy.Request(
                 url,
                 callback=self.parse_page,
@@ -180,7 +179,8 @@ class JobsSpider(scrapy.Spider):
         total = data.get("total") or total
         key = self.key(row)
 
-        for posting in data.get("jobPostings", []):
+        postings = data.get("jobPostings", [])
+        for posting in postings:
             if self.counts[key] >= self.max_jobs:
                 return
             self.counts[key] += 1
@@ -189,17 +189,19 @@ class JobsSpider(scrapy.Spider):
                 headers={"Accept": "application/json"},
                 callback=self.parse_workday_job,
                 errback=self.on_error,
-                cb_kwargs={"row": row, "platform": platform},
+                cb_kwargs={"row": row, "platform": platform, "external_path": posting["externalPath"]},
             )
 
-        if offset + 20 < total and self.counts[key] < self.max_jobs:
+        if postings and offset + 20 < total and self.counts[key] < self.max_jobs:
             yield self.workday_page(api, offset + 20, total, row, platform)
 
-    def parse_workday_job(self, response, row, platform):
+    def parse_workday_job(self, response, row, platform, external_path=""):
         info = response.json().get("jobPostingInfo", {})
         yield self.make_item(
             row, platform,
-            url=info.get("externalUrl") or response.url,
+            url=info.get("externalUrl") or row.get("job_listing_url", "").rstrip("/") + external_path,
+            job_id=info.get("jobReqId", ""),
+            employment_type=info.get("timeType", ""),
             title=info.get("title", ""),
             text=html_to_text(info.get("jobDescription", "")),
             location=info.get("location", ""),
@@ -212,7 +214,8 @@ class JobsSpider(scrapy.Spider):
         for job in response.json().get("jobs", [])[: self.max_jobs]:
             yield self.make_item(
                 row, platform,
-                url=job.get("absolute_url", response.url),
+                url=job.get("absolute_url", ""),
+                job_id=job.get("id", ""),
                 title=job.get("title", ""),
                 text=html_to_text(job.get("content", "")),
                 location=(job.get("location") or {}).get("name", ""),
@@ -222,7 +225,12 @@ class JobsSpider(scrapy.Spider):
     # Lever (JSON API)
     # ------------------------------------------------------------------
     def parse_lever(self, response, row, platform):
-        for job in response.json()[: self.max_jobs]:
+        jobs = response.json()
+        key = self.key(row)
+        for job in jobs:
+            if self.counts[key] >= self.max_jobs:
+                return
+            self.counts[key] += 1
             parts = [job.get("descriptionPlain", "")]
             for section in job.get("lists", []):
                 parts.append(section.get("text", ""))
@@ -230,79 +238,109 @@ class JobsSpider(scrapy.Spider):
             parts.append(job.get("additionalPlain", ""))
             yield self.make_item(
                 row, platform,
-                url=job.get("hostedUrl", response.url),
+                url=job.get("hostedUrl", ""),
+                job_id=job.get("id", ""),
+                employment_type=(job.get("categories") or {}).get("commitment", ""),
                 title=job.get("text", ""),
                 text="\n".join(p for p in parts if p),
                 location=(job.get("categories") or {}).get("location", ""),
             )
 
+        if len(jobs) == 100 and self.counts[key] < self.max_jobs:
+            from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
+            parts = urlsplit(response.url)
+            query = parse_qs(parts.query)
+            query["skip"] = [str(int(query.get("skip", ["0"])[0]) + len(jobs))]
+            yield scrapy.Request(urlunsplit(parts._replace(query=urlencode(query, doseq=True))),
+                                 callback=self.parse_lever, errback=self.on_error,
+                                 cb_kwargs={"row": row, "platform": platform})
+
     # ------------------------------------------------------------------
     # Custom sites (HTML, optionally rendered by Playwright)
     # ------------------------------------------------------------------
     def parse_page(self, response, row, platform, host, depth):
-        content_type = response.headers.get("Content-Type", b"").decode(
-            "utf-8", errors="ignore").lower()
-        if content_type and "text/html" not in content_type:
+        content_type = response.headers.get("Content-Type", b"").decode().lower()
+        if content_type and "html" not in content_type:
             return
-
         key = self.key(row)
-        self.counts[key] += 1
-
-        title = response.css("title::text").get(default="").strip()
-        headings = [
-            t.strip() for t in response.css("h1::text, h2::text, h3::text").getall()
-            if t.strip()
-        ]
-        body_text = page_text(response)
-
-        page_text = (response.url + " " + title + " " + " ".join(headings)
-                     + " " + body_text).lower()
-        if any(sig in page_text for sig in JOB_SIGNALS):
-            item = self.make_item(row, platform, response.url, title, body_text)
-            item["record_type"] = "page"      # a page, not a single job
-            item["headings"] = headings
-            yield item
-
-        if depth >= 2 or self.counts[key] >= self.max_pages:
+        body_text = html_to_text(response.css("main, article").get() or response.css("body").get() or "")
+        title = response.css("h1::text").get(default="").strip()
+        postings = []
+        def visit(node):
+            if isinstance(node, list):
+                for child in node:
+                    visit(child)
+            elif isinstance(node, dict):
+                types = node.get("@type", [])
+                if "JobPosting" in ([types] if isinstance(types, str) else types):
+                    postings.append(node)
+                for value in node.values():
+                    if isinstance(value, (dict, list)):
+                        visit(value)
+        for raw in response.css('script[type="application/ld+json"]::text').getall():
+            try:
+                visit(json.loads(raw))
+            except (ValueError, TypeError):
+                self.logger.warning("Invalid structured data at %s", response.url)
+        for job in postings:
+            if self.counts[key] >= self.max_jobs:
+                break
+            self.counts[key] += 1
+            identifier = job.get("identifier", "")
+            if isinstance(identifier, dict):
+                identifier = identifier.get("value", "")
+            locations = job.get("jobLocation", [])
+            if isinstance(locations, dict):
+                locations = [locations]
+            location = "; ".join(
+                ", ".join(str(v) for k, v in loc.get("address", {}).items() if k != "@type")
+                for loc in locations if isinstance(loc, dict) and isinstance(loc.get("address"), dict))
+            yield self.make_item(row, platform, response.urljoin(job.get("url") or response.url),
+                                 job.get("title", ""), html_to_text(job.get("description", "")),
+                                 location, identifier, job.get("employmentType", ""))
+        if not postings:
+            requisition = re.search(r"(?:requisition|job)\s*(?:id|number|#)\s*:?\s*([\w-]+)", body_text, re.I)
+            specific_url = re.search(r"/(?:job|jobs|position|positions)/[^/]+", response.url)
+            sections = analyze_job(title, body_text)
+            if (title and len(body_text) > 150 and (requisition or specific_url)
+                    and sections["responsibilities"] and sections["requirements"]):
+                if self.counts[key] < self.max_jobs:
+                    self.counts[key] += 1
+                    yield self.make_item(row, platform, response.url, title, body_text,
+                                         job_id=requisition.group(1) if requisition else "")
+            else:
+                yield {"record_type": "job_board" if any(h in response.url.lower() for h in LINK_HINTS)
+                       else "industry_page", **row, "source_url": response.url}
+        if depth >= 3 or self.pages[key] >= self.max_pages or self.counts[key] >= self.max_jobs:
             return
-
         for link in response.css("a::attr(href)").getall():
-            next_url = response.urljoin(link).split("#")[0]
+            next_url = canonical_url(response.urljoin(link))
             parsed = urlparse(next_url)
-            if parsed.scheme not in ("http", "https"):
+            if (parsed.netloc.lower() != host or parsed.path.lower().endswith(SKIP_EXT)
+                    or not any(h in next_url.lower() for h in LINK_HINTS)):
                 continue
-            if parsed.netloc.lower() != host:
+            if next_url in self.seen_pages[key]:
                 continue
-            if parsed.path.lower().endswith(SKIP_EXT):
-                continue
-            if not any(h in next_url.lower() for h in LINK_HINTS):
-                continue
-            yield scrapy.Request(
-                next_url,
-                callback=self.parse_page,
-                errback=self.on_error,
-                meta=self.render_meta(),
-                cb_kwargs={"row": row, "platform": platform,
-                           "host": host, "depth": depth + 1},
-            )
+            # Bound scheduled pages, rather than only completed responses.
+            if self.pages[key] >= self.max_pages:
+                break
+            self.pages[key] += 1
+            self.seen_pages[key].add(next_url)
+            yield scrapy.Request(next_url, callback=self.parse_page, errback=self.on_error,
+                                 meta=self.render_meta(), cb_kwargs={"row": row, "platform": platform,
+                                 "host": host, "depth": depth + 1})
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
     def render_meta(self):
-        if not HAVE_PLAYWRIGHT:
+        if not self.render:
             return {}
-        return {
-            "playwright": True,
-            "playwright_page_goto_kwargs": {"wait_until": "domcontentloaded"},
-            "playwright_page_methods": [PageMethod("wait_for_timeout", 3000)],
-        }
+        return {"playwright": True,
+                "playwright_page_goto_kwargs": {"wait_until": "domcontentloaded"}}
 
     @staticmethod
     def key(row):
         return (row.get("ticker") or row.get("company_name") or "").strip()
 
-    def make_item(self, row, platform, url, title, text, location=""):
+    def make_item(self, row, platform, url, title, text, location="", job_id="", employment_type=""):
         a = analyze_job(title, text)
         return {
             "record_type": "job",
@@ -312,6 +350,10 @@ class JobsSpider(scrapy.Spider):
             "domain": urlparse(url).netloc,
             "job_platform": platform,
             "source_url": url,
+            "job_url": canonical_url(url),
+            "job_board_url": row.get("job_listing_url", ""),
+            "job_id": str(job_id or ""),
+            "employment_type": employment_type,
             "job_title": title,
             "location": location,
             "primary_category": a["primary_category"],
@@ -323,7 +365,7 @@ class JobsSpider(scrapy.Spider):
             "education": a["education"],
             "responsibilities": a["responsibilities"],
             "requirements": a["requirements"],
-            "description": text[:5000],
+            "description": text,
             "crawl_date": now_iso(),
         }
 
