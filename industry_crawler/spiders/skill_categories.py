@@ -24,6 +24,7 @@ CATEGORY_KEYWORDS = {
         "software engineer", "software developer", "backend", "frontend",
         "full stack", "full-stack", "devops", "site reliability",
         "api", "microservices",
+        "mobile developer", "mobile engineer", "embedded software", "qa automation",
     ],
     "Data": [
         "data engineer", "data analyst", "data scientist", "analytics",
@@ -31,11 +32,14 @@ CATEGORY_KEYWORDS = {
     ],
     "Cybersecurity": [
         "security engineer", "cybersecurity", "infosec",
+        "security analyst", "penetration tester", "application security",
         "penetration testing", "threat", "vulnerability",
     ],
     "Cloud & Infrastructure": [
         "cloud", "aws", "azure", "gcp", "kubernetes", "infrastructure",
         "network engineer",
+        "systems administrator", "system administrator", "systems analyst", "it engineer",
+        "technical support engineer", "platform engineer", "site reliability",
     ],
 }
 
@@ -62,6 +66,7 @@ TECHNOLOGIES = [
     "kafka", "snowflake", "databricks", "tableau", "power bi",
     "salesforce", "sap", "oracle", "postgresql", "mysql", "mongodb",
     "redis", "elasticsearch", "hugging face", "langchain", "openai", "jira",
+    "ci/cd", "splunk", "wireshark", "burp suite", "metasploit", "oauth",
 ]
 
 # Words are case-insensitive via (?i:...); abbreviations (BS, MS, MBA) must be
