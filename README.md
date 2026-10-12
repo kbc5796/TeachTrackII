@@ -40,19 +40,6 @@ Detection does not imply a dedicated extraction adapter. Workday, Greenhouse and
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    A["S&P 500 company list"] --> B["Job-board discovery"]
-    B --> C["URL validation"]
-    C --> D["Individual job extraction"]
-    D --> E["CS relevance filtering"]
-    E --> F["Technical keyword extraction"]
-    F --> G["Preliminary categories"]
-    G --> H["SQLite storage and exports"]
-    C -. "Unresolved sources" .-> R["Manual review reports"]
-    E -. "Rejected records" .-> Q["Failure storage"]
-```
-
 This diagram represents the research workflow. In the implementation, the jobs spider adds keyword/category fields during extraction, and the item pipeline calculates CS relevance before saving accepted records. Source collection and job extraction are separate commands connected through `company_sources.csv`; there is no automatic orchestration service. The jobs spider only restricts source statuses when `source_status` is explicitly supplied.
 
 ## Project structure
