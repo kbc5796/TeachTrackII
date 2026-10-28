@@ -34,6 +34,9 @@ storage / exports
 ```
 
 Keep all 500 company rows and the `tickers` column for multiple share classes.
+Collection supports all eligible companies in that dataset. The top 100 are
+prioritized only for manual verification of listing URLs, API functionality and
+United States location filters; they are not a crawl restriction.
 Missing listing URLs remain blank until an official board is confidently identified.
 
 Open `company_sources.csv` in a text editor or spreadsheet application. The source columns are:
@@ -85,7 +88,7 @@ If activation is unavailable, use `.\.venv\Scripts\python.exe` instead of `pytho
 
 ### Optional browser rendering
 
-Workday, Greenhouse and Lever API requests do not require a browser. For HTML sites that need JavaScript rendering, install:
+Workday, Greenhouse, Lever and SmartRecruiters API requests do not require a browser. For HTML sites that need JavaScript rendering, install:
 
 ```powershell
 python -m pip install scrapy-playwright
@@ -183,7 +186,7 @@ python -m ruff check .
 git diff --check
 ```
 
-Tests cover Workday/Greenhouse/Lever and custom extraction, pagination, platform detection, weighted filtering, keywords/categories, deduplication, storage/exports, CSV structure, missing and invalid sources, explicit exclusions, and input immutability. They use local fixtures and temporary outputs; passing tests does not establish current access to live job boards.
+Tests cover Workday/Greenhouse/Lever/SmartRecruiters and custom extraction, pagination, platform detection, weighted filtering, keywords/categories, deduplication, storage/exports, CSV structure, missing and invalid sources, explicit exclusions, and input immutability. They use local fixtures and temporary outputs; passing tests does not establish current access to live job boards.
 
 Replay captured jobs through filtering and exports without contacting employers:
 
@@ -199,7 +202,7 @@ This is a captured-snapshot demonstration, not a fresh live crawl. See [testing 
 | --- | --- |
 | `company_sources.csv` | Manually maintained company/source input. |
 | `industry_crawler/company_input.py` | Read-only CSV structure checks; no HTTP requests or source updates. |
-| `industry_crawler/spiders/jobs.py` | Individual job adapters, pagination and missing-source handling. |
+| `industry_crawler/spiders/jobs.py`, `adapters/` | Registry-based collection, provider pagination and missing-source handling. |
 | `industry_crawler/spiders/platforms.py` | Platform detection, API helpers and HTML text utilities. |
 | `industry_crawler/spiders/skill_categories.py` | Keywords, education, sections and preliminary categories. |
 | `industry_crawler/cs_filter.py` | Weighted CS relevance scoring. |
@@ -211,8 +214,15 @@ This is a captured-snapshot demonstration, not a fresh live crawl. See [testing 
 
 ## Limitations and future work
 
-Blank listing URLs require further manual research. A saved listing URL or Verified label does not guarantee current access. Workday, Greenhouse and Lever have API extraction adapters; SmartRecruiters, iCIMS, Taleo, Oracle Recruiting, SAP SuccessFactors, Eightfold and Custom sites rely on generic HTML support and may require adapter work. Detection is not a guarantee of extraction.
+Blank listing URLs require further manual research. A saved listing URL or Verified label does not guarantee current access. Workday, Greenhouse, Lever and SmartRecruiters have API extraction adapters; iCIMS, Taleo, Oracle Recruiting, SAP SuccessFactors, Eightfold and Custom sites rely on generic HTML support and may require adapter work. Detection is not a guarantee of extraction.
 
 JavaScript-heavy websites, unsupported layouts, changing APIs, robots restrictions, rate limiting, authentication and blocked boards can prevent collection. Generic HTML follows same-host links within depth/page limits. The crawler records failures and continues without changing sources or bypassing restrictions.
 
 Future work includes completing manually reviewed source coverage, improving extraction and CS filtering accuracy, refining preliminary categories, integrating the academic crawler, and building the research knowledge graph. Advanced AI/ML grouping is deferred.
+
+Adapter extensions, record validation and manually reviewed source proposals are
+covered in [the contributor guide](docs/job-adapters.md). Alternate source CSVs
+can select only ticker/listing-URL pairs already in `company_sources.csv`.
+SQLite updates retain source observations and first/last-seen times. Conflicting
+IDs and uncertain duplicate candidates remain separate for manual review; matching
+titles alone never merge jobs. See [crawler details](docs/job-crawler.md).

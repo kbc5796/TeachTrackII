@@ -1,0 +1,24 @@
+name: Job source proposal
+description: Suggest a public job API, employer listing, link correction, U.S. filter or future company
+title: "Job source review: "
+body:
+  - type: markdown
+    attributes:
+      value: "Suggest public API endpoints or documentation, direct employer listings, link corrections, better United States filters, or companies for future expansion. Maintainers manually review all suggestions; submissions never automatically change crawling. Companies outside the approved scope remain inactive unless maintainers explicitly expand it."
+  - type: input
+    id: company
+    attributes:
+      label: Company name
+    validations:
+      required: true
+  - type: input
+    id: url
+    attributes:
+      label: Suggested URL
+    validations:
+      required: true
+  - type: textarea
+    id: explanation
+    attributes:
+      label: Explanation (optional)
+      description: "Tell us what this improves, if useful. Do not include credentials or personal data."

@@ -28,3 +28,12 @@ class JobRecord(TypedDict, total=False):
     is_ai_job: bool
     ai_signal: str
     crawl_date: str
+    company_id: str
+    source_platform: str
+    source_job_id: str
+    requisition_id: str
+    first_seen: str
+    last_seen: str
+    original_values: dict
+    source_observations: list[dict]
+    duplicate_review: list[str]

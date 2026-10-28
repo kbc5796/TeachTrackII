@@ -10,6 +10,17 @@ Keep all 500 companies in their existing order. Keep names, primary tickers,
 additional share-class `tickers`, sectors and official corporate website URLs.
 Do not remove a company because its listing URL is missing.
 
+All eligible companies in this 500-company dataset remain supported for collection.
+The top 100 are a manual-verification priority for listing URLs, API functionality
+and United States location filters, not a crawl restriction. Verification priority
+or a non-Verified status does not impose a 100-company limit.
+
+Community issues may suggest APIs or documentation, listing URLs, link corrections,
+U.S. filters and future companies. Every suggestion is manually reviewed and never
+automatically added or crawled. Outside companies remain inactive unless maintainers
+explicitly expand the approved company scope through a reviewed repository change.
+The existing source and request security restrictions still apply.
+
 ## Research and edit a source
 
 1. Follow the employer's official careers links in a browser.
@@ -32,6 +43,32 @@ For Apple, keep the separate careers navigation page and use:
 ```text
 https://jobs.apple.com/en-us/search?location=united-states-USA
 ```
+
+## Verify employer ownership and United States filters
+
+Start from the employer's official corporate website and follow its careers links
+to the proposed board. For an external ATS, confirm the employer-specific tenant
+or board identifier and employer branding against that official link; a vendor
+hostname or HTTPS alone does not establish employer ownership. Check redirect
+destinations, public access, actual vacancies and applicable robots restrictions.
+For an API suggestion, use public vendor documentation and confirm that the
+endpoint returns this employer's jobs without credentials or bypassing access
+controls. Review any required approved-host change separately.
+
+Apply the board's United States location filter and compare results with the
+unfiltered board. Inspect the actual API request as well as the copied URL: verify
+that the adapter carries the country/location parameters into listing requests
+and subsequent pages. Check returned individual job locations across pages for
+non-U.S. results, including remote or multi-location postings. `en-US`, English
+text, a U.S. company headquarters or a selected UI control alone proves nothing
+about job location; some APIs ignore the board's UI/query filters.
+
+Record the reviewed URL, observed filter parameters, API behavior, sample job
+locations, reviewer/date and any limitations in the review issue or PR. If U.S.-only
+results cannot be confirmed, describe the source as global or unverified for U.S.
+filtering rather than claiming a restriction. Preserve the direct official board
+when suitable and review extracted locations. Approve corrections only through a
+reviewed repository change; issue suggestions cannot alter the runtime allowlist.
 
 ## Columns and runtime behavior
 

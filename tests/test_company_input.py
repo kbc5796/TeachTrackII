@@ -26,7 +26,7 @@ def write_sources(path, rows):
         writer.writerows(rows)
 
 
-def test_incomplete_csv_crawls_unverified_and_reports_skips(tmp_path):
+def test_incomplete_csv_crawls_unverified_and_reports_skips(tmp_path, monkeypatch):
     path = tmp_path / "companies.csv"
     rows = [{"company_name": "Example", "ticker": "X", "job_listing_url": "https://jobs.lever.co/example",
              "source_status": "Unverified"},
@@ -35,6 +35,7 @@ def test_incomplete_csv_crawls_unverified_and_reports_skips(tmp_path):
             {"company_name": "Excluded", "ticker": "E", "job_listing_url": "https://example.org/jobs", "source_status": "Excluded"}]
     write_sources(path, rows)
     before = path.read_bytes()
+    monkeypatch.setattr("industry_crawler.spiders.jobs.CSV_FILE", path)
     spider = JobsSpider(sources=path)
     output = collect(spider)
     assert isinstance(output[0], Request)
@@ -72,9 +73,10 @@ def test_bad_header_becomes_input_error(tmp_path, header):
     assert spider.source_summary["input_errors"] == 1
 
 
-def test_malformed_row_does_not_stop_other_companies(tmp_path):
+def test_malformed_row_does_not_stop_other_companies(tmp_path, monkeypatch):
     path = tmp_path / "sources.csv"
     path.write_text("company_name,ticker,job_listing_url\nBad,B\nGood,G,https://jobs.lever.co/good\n")
+    monkeypatch.setattr("industry_crawler.spiders.jobs.CSV_FILE", path)
     output = collect(JobsSpider(sources=path))
     assert output[0]["record_type"] == "skipped"
     assert isinstance(output[1], Request)
@@ -112,12 +114,13 @@ def test_missing_listing_never_falls_back_to_corporate_or_careers_url(tmp_path, 
     assert path.read_bytes() == before
 
 
-def test_supplied_us_search_query_is_preserved(tmp_path):
+def test_supplied_us_search_query_is_preserved(tmp_path, monkeypatch):
     path = tmp_path / "sources.csv"
     url = "https://jobs.apple.com/en-us/search?location=united-states-USA"
     write_sources(path, [{"company_name": "Apple Inc.", "ticker": "AAPL",
                           "job_listing_url": url, "source_status": "Needs Review"}])
     before = path.read_bytes()
+    monkeypatch.setattr("industry_crawler.spiders.jobs.CSV_FILE", path)
     request, = collect(JobsSpider(sources=path))
     assert request.url == url
     assert request.cb_kwargs["row"]["job_listing_url"] == url
@@ -126,12 +129,13 @@ def test_supplied_us_search_query_is_preserved(tmp_path):
 
 
 @pytest.mark.parametrize("facet", ["locationCountry", "Location_Country", "Country", "locationHierarchy2"])
-def test_workday_supplied_facets_survive_pagination(tmp_path, facet):
+def test_workday_supplied_facets_survive_pagination(tmp_path, facet, monkeypatch):
     path = tmp_path / "sources.csv"
     us = "bc33aa3152ec42d4995f4791a106ed09"
     url = f"https://example.wd5.myworkdayjobs.com/External?{facet}={us}&q=software"
     row = {"company_name": "Example", "ticker": "X", "job_listing_url": url, "source_status": ""}
     write_sources(path, [row])
+    monkeypatch.setattr("industry_crawler.spiders.jobs.CSV_FILE", path)
     spider = JobsSpider(sources=path)
     request, = collect(spider)
     next_page = spider.workday_page(request.cb_kwargs["api"], 20, 100, row, "Workday")
