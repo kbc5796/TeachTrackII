@@ -34,6 +34,9 @@ storage / exports
 ```
 
 Keep all 500 company rows and the `tickers` column for multiple share classes.
+Collection supports all eligible companies in that dataset. The top 100 are
+prioritized only for manual verification of listing URLs, API functionality and
+United States location filters; they are not a crawl restriction.
 Missing listing URLs remain blank until an official board is confidently identified.
 
 Open `company_sources.csv` in a text editor or spreadsheet application. The source columns are:

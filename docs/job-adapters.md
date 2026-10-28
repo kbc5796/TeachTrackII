@@ -1,19 +1,33 @@
 # Contributing a job adapter or source
 
-Collection is limited to the existing S&P 500 company dataset. Open a GitHub issue
-using the job-source proposal template, or submit a PR documenting a corrected
-source for an existing ticker. Include the official employer careers page, exact
-listing URL, public API documentation if applicable, location/search filters,
-robots/access limitations and a small offline fixture. Maintainers must manually
-verify company ownership, endpoint purpose, safe HTTPS hosts and the existing
-company's membership before merging. A proposal or issue never triggers a crawl.
-Do not submit aggregators, credentials, private hosts or new companies.
+Collection supports all eligible companies in the existing 500-company S&P 500
+dataset. The top 100 are prioritized only for manual verification of listing URLs,
+API functionality and United States location filters; they are not a crawl
+restriction. There is no top-100-only allowlist.
 
-`company_sources.csv` is the reviewed repository allowlist. `sources=...` can
-select existing ticker/URL pairs, including their current query filters, but
-cannot authorize new targets. Invalid/excluded repository sources are blocked.
-No discovery service, submission endpoint or automatic approval is provided.
-Changes to provider API hosts require a code review of `source_policy.py`.
+Use the job-source proposal issue template to suggest public job API endpoints or
+documentation, direct employer listing URLs, corrections to existing links,
+better United States filters, or new companies for possible future expansion.
+Only a company name and suggested URL are required; explanation is optional.
+Maintainers manually review every suggestion. An issue never automatically adds
+a company or URL to the crawler and never triggers a crawl. Companies outside the
+current S&P 500 dataset remain inactive unless maintainers explicitly expand the
+approved company scope through a reviewed repository change.
+
+`company_sources.csv` remains the existing 500-company source dataset and approved
+source allowlist. `sources=...` can select existing ticker/URL pairs, including
+their current query filters, but cannot authorize new targets. Invalid/excluded
+repository sources remain blocked. Suggestions do not bypass approved-source,
+request-host, redirect, robots or access restrictions. No discovery service,
+submission backend or automatic approval is provided. Changes to provider API
+hosts require a code review of `source_policy.py`.
+
+Maintainers must follow the [manual source verification guide](manual-sources.md)
+to establish employer ownership, test the actual API requests and returned job
+locations, and record whether filters really limit results to United States jobs
+before approving a source correction. Do not approve aggregators, credentials,
+private hosts or unsupported endpoints. Approval requires an explicit reviewed
+repository change; an issue submission alone is never approval.
 
 ## Adapter contract
 

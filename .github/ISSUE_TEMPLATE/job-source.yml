@@ -1,32 +1,24 @@
 name: Job source proposal
-description: Propose a manually reviewed source for an existing S&P 500 dataset company
+description: Suggest a public job API, employer listing, link correction, U.S. filter or future company
 title: "Job source review: "
 body:
   - type: markdown
     attributes:
-      value: "Proposals never trigger crawling. Maintainer review is required; no new companies or aggregators."
+      value: "Suggest public API endpoints or documentation, direct employer listings, link corrections, better United States filters, or companies for future expansion. Maintainers manually review all suggestions; submissions never automatically change crawling. Companies outside the approved scope remain inactive unless maintainers explicitly expand it."
   - type: input
-    id: ticker
+    id: company
     attributes:
-      label: Existing company name and ticker
+      label: Company name
     validations:
       required: true
   - type: input
-    id: employer
+    id: url
     attributes:
-      label: Official employer careers URL
-    validations:
-      required: true
-  - type: input
-    id: listing
-    attributes:
-      label: Proposed public listing URL
+      label: Suggested URL
     validations:
       required: true
   - type: textarea
-    id: evidence
+    id: explanation
     attributes:
-      label: Ownership, API documentation, filters, robots restrictions and test evidence
-      description: "Provide reviewable evidence. Do not include credentials or personal data."
-    validations:
-      required: true
+      label: Explanation (optional)
+      description: "Tell us what this improves, if useful. Do not include credentials or personal data."
