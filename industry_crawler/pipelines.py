@@ -2,7 +2,7 @@
 from scrapy.exceptions import DropItem
 
 from .cs_filter import score_job
-from .normalization import canonical_url
+from .normalization import normalize_job
 from .storage import JobStore
 
 
@@ -20,7 +20,7 @@ class JobPipeline:
         if item.get("record_type") != "job":
             self.store.reject(item, item.get("reason", item.get("record_type", "invalid")))
             raise DropItem("Not an individual job", log_level="DEBUG")
-        item["job_url"] = canonical_url(item.get("job_url", ""))
+        item = normalize_job(item)
         missing = [k for k in ("company_name", "job_title", "description", "job_url") if not item.get(k)]
         if missing:
             self.store.reject(item, "missing/invalid: " + ", ".join(missing))

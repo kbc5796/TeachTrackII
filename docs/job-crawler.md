@@ -11,11 +11,20 @@ research and review are manual; see [manual sources](manual-sources.md). The `jo
   descriptions and locations. No undocumented pagination is added.
 - Lever: `skip`/`limit` pagination, description and section lists, IDs, hosted
   URLs, locations and commitment types.
+- SmartRecruiters: public employer Posting API lists with `limit`/`offset` and
+  `totalFound`, then an individual detail request for each posting. Captures ID,
+  employer metadata, location, employment label, posting URL, reference number
+  and all text sections of the job ad. Uses fixed documented endpoint paths;
+  does not follow arbitrary API `ref` URLs. No credentials or paid service.
+  See [endpoints](https://developers.smartrecruiters.com/docs/endpoints) and
+  [objects](https://developers.smartrecruiters.com/docs/objects).
 - Generic HTML: nested JSON-LD `JobPosting` records, including lists and `@graph`.
   Without structured data, requires a title, substantial text, a specific posting
   URL or requisition ID, and responsibilities plus requirements sections.
 
-Other detected platforms use generic HTML. Same-host job links are followed to
+Other detected platforms use generic HTML. Provider implementations live in
+`industry_crawler/adapters/`, selected through its registry. Existing spider
+callbacks and platform helpers remain public and checkpoint-compatible. Same-host job links are followed to
 depth three within a scheduled-page budget. Careers information without job
 evidence is recorded as a board/non-job page and rejected by the jobs pipeline.
 Location and employment fields absent from the source remain empty.
@@ -37,7 +46,12 @@ by the local tests and does not bypass access restrictions.
 
 Missing `job_listing_url` values are always skipped, even when corporate or
 careers URLs are present. There is no fallback or source discovery. Invalid/excluded rows are skipped regardless of a requested status
-filter. The CSV is read-only. Missing files, malformed headers/rows and invalid
+filter. The CSV is read-only. Alternate `sources` CSVs may only select company
+(ticker)/listing-URL pairs already present in the repository dataset. Newly
+submitted sites need manual review and a repository change before collection.
+Requests and redirects are constrained to the selected listing host and fixed
+API hosts; unsafe URL schemes, credentials, local/private IP literals and unusual
+ports are rejected. Off-host career redirects may require a reviewed CSV correction. Missing files, malformed headers/rows and invalid
 entry URLs are recorded with reasons; valid companies continue.
 
 ```powershell
@@ -64,12 +78,35 @@ The score is a heuristic, not a probability. Non-CS records retain an explanatio
 in failure storage. Responsibilities/requirements snippets are bounded to 1,500
 characters; full job descriptions are preserved.
 
-Identity is company-scoped and prefers platform ID, then canonical URL; fallback
-identity utilities use normalized title/location. Production records without a
-valid posting URL are rejected. Canonical URLs remove fragments and known tracking
-parameters. ID-less observations can merge with a known posting at the same
-company/platform URL; different known IDs remain distinct. Duplicates update
-SQLite and do not generate a second insert/feed row.
+Company identity uses normalized tickers (including dot/hyphen variants), or a
+normalized name when no ticker exists. Shared normalization cleans company names,
+titles, locations/state components, posting URLs, malformed fields and employment
+types. Changed values remain in `original_values`; unknown employment labels are
+retained. Full descriptions keep their line breaks. Location normalization is
+conservative and does not establish identity by itself.
+
+Storage prefers company-scoped platform IDs, then explicit employer requisition
+IDs, then exact canonical posting URLs when at least one capture lacks an ID.
+Workday `jobReqId`, Greenhouse `requisition_id` and SmartRecruiters `refNumber`
+provide explicit reference evidence; IDs are never guessed from titles. Distinct
+known IDs on the same platform, or conflicting explicit references, prevent a
+merge. Known IDs on different platforms do not merge merely because a URL or title
+matches. Shared employer reference evidence can verify a cross-platform match.
+Stronger ID evidence takes priority over a weaker URL match. Multiple equally
+strong candidates remain separate, with `duplicate_review` containing stored
+identity keys for manual review. Matching titles/locations only create review
+hints; they never cause automatic merging. Identity-less direct storage calls
+also remain separate; the pipeline requires a valid posting URL.
+
+`first_seen` survives updates, `last_seen` records the latest observation time,
+and `source_platform`/`source_job_id` expose provider identity. Unique
+`source_observations` preserve each original source, URL and ID across merges.
+An ID-less refresh retains the representative known provider ID. Missing fields
+do not erase known values. Duplicate updates retain the existing SQLite primary
+key and do not produce a new feed row. Existing databases are indexed additively
+through `job_companies`; original rows are untouched until refreshed. Historical
+duplicates are not deleted or automatically consolidated. Back up research data
+before any future manual reconciliation.
 
 Each output directory contains `jobs.sqlite3`, `cs_jobs.json`, `cs_jobs.csv`,
 `cs_jobs.jsonl`, `crawl_failures.csv` and `crawl_summary.json`. Accepted postings
@@ -107,3 +144,27 @@ Limits include changing APIs, unsupported tenant formats, dynamic or multilingua
 HTML, blocked sites, heuristic category/filter accuracy, per-process restart
 counters and missing closed-job reconciliation. Advanced clustering and academic
 integration remain future work.
+
+## Integration review (SCRUM-194 / SCRUM-207)
+
+The reviewed implementation already supplied useful Workday list/detail and Lever
+pagination, Greenhouse `content=true`, strict generic HTML job evidence, CS
+filtering, skill extraction, retry backoff and transactional exports. These were
+reused. Provider routing/parsing previously lived in one spider; malformed API
+containers could terminate a callback, and duplicate refreshes replaced payloads
+without first/last timestamps or retained cross-source evidence. The adapters,
+validation, provenance and conservative matching address those gaps.
+
+Workday CXS remains an employer-site API without a stable vendor contract.
+Greenhouse returns the public board in one request; employment type is left empty
+when not supplied. Lever uses the existing public `.co` endpoint; regional/custom
+tenants may need a separately reviewed adapter change. SmartRecruiters requires
+an identifiable company path and published public job ads; private/inactive jobs
+and missing detail URLs/descriptions are not invented. Missing required fields
+are rejected by the pipeline. API decode/container failures are quarantined by
+`JobErrorMiddleware`; HTTP errors use the existing Scrapy retry and errback path.
+Robots, concurrency, delays and retry settings remain enabled. Browser rendering,
+current live access and a full 500-company crawl were not tested in this change.
+
+See [adapter contributions](job-adapters.md) for the extension contract, an
+example and the manually reviewed source proposal process.

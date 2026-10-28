@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlparse
 LOCALE = re.compile(r"^[a-z]{2}([-_][A-Za-z]{2})?$")   # en, en-US, fr_CA
 
 # Platforms we can read through a JSON API (fast, no browser needed).
-API_PLATFORMS = {"Workday", "Greenhouse", "Lever"}
+API_PLATFORMS = {"Workday", "Greenhouse", "Lever", "SmartRecruiters"}
 
 
 def detect_platform(url, content=""):
@@ -86,7 +86,7 @@ def lever_company(url):
 def html_to_text(raw):
     """HTML (possibly entity-escaped, like Greenhouse) -> readable text
     that keeps line breaks, so section headings stay on their own lines."""
-    if not raw:
+    if not isinstance(raw, str) or not raw:
         return ""
     text = html.unescape(raw)
     text = re.sub(r"(?i)<br\s*/?>|</p>|</li>|</h[1-6]>|</div>", "\n", text)
